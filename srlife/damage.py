@@ -166,13 +166,18 @@ class DamageCalculator:
     """
     # pylint: disable=no-member
     with multiprocess.Pool(nthreads) as p:
-      Ns = list(decorator(
+      Nsx = list(decorator(
         p.imap(lambda x: self.single_cycles(x, material, receiver), receiver.tubes),
         receiver.ntubes))
+    Ns = []; Dc = []; Df = []
+    for i in Nsx:
+      Ns.append(i[0]); Dc.append(i[1]); Df.append(i[2]);
     N = min(Ns)
+    Dc = max(Dc)
+    Df = max(Df)
 
     # Results come out as days
-    return N
+    return [N,Dc,Df]
 
   def make_extrapolate(self, D):
     """
@@ -223,7 +228,7 @@ class TimeFractionInteractionDamage(DamageCalculator):
     # This is going to be expensive, but I don't see much way around it
     return min(self.calculate_max_cycles(self.make_extrapolate(c), 
       self.make_extrapolate(f), material) for c,f in 
-        zip(Dc.reshape(nc,-1).T, Df.reshape(nc,-1).T))
+        zip(Dc.reshape(nc,-1).T, Df.reshape(nc,-1).T)),np.amax(Dc),np.amax(Df)
   
   def calculate_max_cycles(self, Dc, Df, material, rep_min = 1, rep_max = 1e6):
     """
