@@ -9,7 +9,7 @@ from thermal import *
 from mechanical import *
 
 def run_gemasolar(panel,nthreads=4):
-	model = receiver_cyl()
+	model = receiver_cyl(Ri = 20.0/2000, Ro = 22.4/2000)
 
 	# Importing data from Modelica
 	fileName = '%s/solartherm/examples/GemasolarSystemOperation_res.mat'%(os.path.expanduser('~'))
