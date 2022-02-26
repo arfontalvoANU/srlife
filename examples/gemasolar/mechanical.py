@@ -5,10 +5,10 @@ sys.path.append('../..')
 
 from srlife import receiver, solverparams, library, thermal, structural, system, damage, managers
 
-def setup_problem(Ro, th, H_rec, Nr, Nt, Nz, times, fluid_temp, h_flux, pressure, T_base, folder=None):
+def setup_problem(Ro, th, H_rec, Nr, Nt, Nz, times, fluid_temp, h_flux, pressure, T_base, folder=None, days=1):
 	# Setup the base receiver
 	period = 24.0                                                         # Loading cycle period, hours
-	days = 1                                                              # Number of cycles represented in the problem 
+	days = days                                                           # Number of cycles represented in the problem 
 	panel_stiffness = "disconnect"                                        # Panels are disconnected from one another
 	model = receiver.Receiver(period, days, panel_stiffness)              # Instatiating a receiver model
 
@@ -54,7 +54,7 @@ def setup_problem(Ro, th, H_rec, Nr, Nt, Nz, times, fluid_temp, h_flux, pressure
 		fileName = '%s/model.hdf5'%folder
 	model.save('model.hdf5')
 
-def run_problem(zpos,nz,progress_bar=True,folder=None):
+def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4):
 	# Load the receiver we previously saved
 	if folder==None:
 		fileName = 'model.hdf5'
@@ -63,9 +63,7 @@ def run_problem(zpos,nz,progress_bar=True,folder=None):
 	model = receiver.Receiver.load(fileName)
 
 	# Choose the material models
-	fluid_mat = library.load_fluid("nitratesalt", "base") # Sodium model
-	# Base 316H thermal and damage models, a simplified deformation model to 
-	# cut down on the run time of the 3D analysis
+	fluid_mat = library.load_fluid("nitratesalt", "base")
 	thermal_mat, deformation_mat, damage_mat = library.load_material("A230", "base", "base", "base")
 
 	# Cut down on run time for now by making the tube analyses 1D
@@ -76,9 +74,9 @@ def run_problem(zpos,nz,progress_bar=True,folder=None):
 
 	# Setup some solver parameters
 	params = solverparams.ParameterSet()
-	params['progress_bars'] = progress_bar # Print a progress bar to the screen as we solve
-	params['nthreads'] = 4 # Solve will run in multithreaded mode, set to number of available cores
-	params['system']['atol'] = 1.0e-4 # During the standby very little happens, lower the atol to accept this result
+	params['progress_bars'] = progress_bar         # Print a progress bar to the screen as we solve
+	params['nthreads'] = nthreads                  # Solve will run in multithreaded mode, set to number of available cores
+	params['system']['atol'] = 1.0e-4              # During the standby very little happens, lower the atol to accept this result
 
 	# Choose the solvers, i.e. how we are going to solve the thermal,
 	# single tube, structural system, and damage calculation problems.

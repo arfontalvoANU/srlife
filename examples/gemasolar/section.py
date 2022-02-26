@@ -8,7 +8,7 @@ from multiprocessing import Pool
 from thermal import *
 from mechanical import *
 
-def run_gemasolar(panel,position):
+def run_gemasolar(panel,position,days,nthreads):
 	model = receiver_cyl(Ri = 20.0/2000, Ro = 22.4/2000)
 
 	# Importing data from Modelica
@@ -23,7 +23,7 @@ def run_gemasolar(panel,position):
 	for i in range(len(times)):
 		if i==0:
 			index.append(i)
-		elif times[i]%1800.==0 and times[i]>times[i-1] and times[i]<90000:
+		elif times[i]%1800.==0 and times[i]>times[i-1] and times[i]<(days*24*3600+3600):
 			index.append(i)
 
 	# Importing flux
@@ -71,10 +71,11 @@ def run_gemasolar(panel,position):
 		Tf[:,lb:ub],
 		qnet[:,:,lb:ub],
 		pressure,
-		Tf[0,0])
+		Tf[0,0],
+		days=days)
 
 	# Running srlife
-	life = run_problem(position, model.nbins)
+	life = run_problem(position, model.nbins, nthreads=nthreads)
 
 	# Saving thermal results
 	matName = '%s/solartherm/examples/st_nash_tube_stress_res.mat'%os.path.expanduser('~')
@@ -124,10 +125,12 @@ if __name__=='__main__':
 	parser = argparse.ArgumentParser(description='Estimates average damage of a representative tube in a receiver panel')
 	parser.add_argument('--panel', type=int, default=1, help='Panel to be simulated. Default=1')
 	parser.add_argument('--position', type=int, default=1, help='Panel position to be simulated. Default=1')
+	parser.add_argument('--days', type=int, default=1, help='Number of days to be simulated. Default=1')
+	parser.add_argument('--nthreads', type=int, default=4, help='Number of processors. Default=4')
 	args = parser.parse_args()
 
 	tinit = time.time()
-	run_gemasolar(args.panel,args.position)
+	run_gemasolar(args.panel,args.position,args.days,args.nthreads)
 	seconds = time.time() - tinit
 	m, s = divmod(seconds, 60)
 	h, m = divmod(m, 60)
