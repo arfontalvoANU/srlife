@@ -164,13 +164,21 @@ class receiver_cyl:
 		qnet = hf*(Ti - Tf)
 		Qnet = qnet.sum(axis=1)*self.Ri*self.dt*self.dz
 		self.qnet = np.concatenate((qnet[:,1:],qnet[:,::-1]),axis=1)
+#		qem = self.em*self.sigma*(pow(To,4) - pow(Tamb,4))*self.dt
+#		qem = qem.sum(axis=1)
+#		a = (h_ext[:,0]*self.Ro*np.log(self.Ro) + self.kp)/(hf[:,0]*self.Ri*np.log(self.Ri) + self.kp)*(np.pi*hf[:,0]*self.Ri/self.Ro)
+#		A0 = (np.pi*h_ext[:,0]*Tamb[:,0] + self.ab*CG - qem - a*Tf[:,0])/(np.pi*h_ext[:,0] - a)
+#		B0 = hf[:,0]*self.Ri/self.kp*(-A0 + Tf[:,0])/(1 + hf[:,0]*self.Ri/self.kp*np.log(self.Ri))
+
+		for t in range(Ti.shape[0]):
+			BDp = self.Fourier(Ti[t,:])
 
 		# Fourier coefficients
 		self.s, self.e = self.stress(Ti,To)
 		return Qnet
 
 	def Fourier(self,T):
-		coefs = np.empty(3)
+		coefs = np.empty(21)
 		self.fun(self.nt, self.dt, T, coefs)
 		return coefs
 
