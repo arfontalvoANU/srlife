@@ -124,7 +124,7 @@ def run_gemasolar(panel,position,days,nthreads):
 if __name__=='__main__':
 	parser = argparse.ArgumentParser(description='Estimates average damage of a representative tube in a receiver panel')
 	parser.add_argument('--panel', type=int, default=1, help='Panel to be simulated. Default=1')
-	parser.add_argument('--position', type=int, default=1, help='Panel position to be simulated. Default=1')
+	parser.add_argument('--position', type=float, default=1, help='Panel position to be simulated. Default=1')
 	parser.add_argument('--days', type=int, default=1, help='Number of days to be simulated. Default=1')
 	parser.add_argument('--nthreads', type=int, default=4, help='Number of processors. Default=4')
 	args = parser.parse_args()
