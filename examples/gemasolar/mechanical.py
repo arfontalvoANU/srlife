@@ -98,6 +98,7 @@ def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4):
 	# Actually solve for life
 	try:
 		life = solver.solve_life()
+		model.save('model_solved.hdf5')
 	except RuntimeError:
 		life = np.empty(3)
 		life[:] = np.NaN
