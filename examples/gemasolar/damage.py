@@ -1,11 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Wed Mar  9 16:57:42 2022
-
-@author: arfontalvo
-"""
-
 import numpy as np
 import os, sys
 import scipy.optimize as opt
@@ -14,8 +6,7 @@ sys.path.append('../..')
 
 from srlife import receiver, library
 
-
-fileName = '%s/model_solved.hdf5'%os.path.join(os.path.expanduser('~'),'srlife/examples/gemasolar')
+fileName = 'model_solved.hdf5'
 model = receiver.Receiver.load(fileName)
 
 thermal_mat, deformation_mat, damage_mat = library.load_material("A230", "base", "base", "base")
@@ -172,3 +163,12 @@ for c,f in zip(Dc.reshape(nc,-1).T, Df.reshape(nc,-1).T):
 
 max_cycles = np.array(max_cycles)
 print(min(max_cycles))
+
+import scipy.io as sio
+mydict = sio.loadmat('quadrature_results.mat')
+mydict['cumDc'] = np.max(np.cumsum(Dc.reshape(nc,-1).T, axis=1), axis=0)
+mydict['cumDf'] = np.max(np.cumsum(Df.reshape(nc,-1).T, axis=1), axis=0)
+mydict['Dc'] = np.max(Dc.reshape(nc,-1).T, axis=0)
+mydict['Df'] = np.max(Df.reshape(nc,-1).T, axis=0)
+mydict['max_cycles'] = max_cycles
+sio.savemat('quadrature_results.mat',mydict)
