@@ -93,6 +93,21 @@ class TubeSpring(Spring):
     # Get the first state
     self.state_n = self.solver.init_state(self.tube, self.material, 
         i = 0)
+#    import scipy.io as sio
+#    mydict=sio.loadmat('/mnt/fb7cc2c9-e328-4f3f-a6f8-918195722408/srlife/examples/gemasolar/state_49.mat')
+#    self.state_n.stress=mydict['stress']
+#    self.state_n.strain=mydict['strain']
+#    self.state_n.mechanical_strain=mydict['mechanical_strain']
+#    self.state_n.thermal_strain=mydict['thermal_strain']
+#    self.state_n.history=mydict['history']
+#    self.state_n.tangent=mydict['tangent']
+#    self.state_n.temperature=mydict['temperature']
+#    self.state_n.displacements=mydict['displacements']
+#    self.state_n.time=mydict['time']
+#    self.state_n.energy=mydict['energy']
+#    self.state_n.dissipation=mydict['dissipation']
+#    self.state_n.force=mydict['force']
+#    self.state_n.stiffness=mydict['stiffness']
 
     # Dump this first state to the Tube
     self.solver.dump_state(self.tube, 0, self.state_n)
@@ -113,6 +128,23 @@ class TubeSpring(Spring):
     """
     self.solver.dump_state(self.tube, i, self.state_np1)
     self.state_n = self.state_np1
+    if self.state_n.time%24==0:
+      import scipy.io as sio
+      mydict={}
+      mydict['stress'] = self.state_n.stress
+      mydict['strain'] = self.state_n.strain
+      mydict['mechanical_strain'] = self.state_n.mechanical_strain
+      mydict['thermal_strain'] = self.state_n.thermal_strain
+      mydict['history'] = self.state_n.history
+      mydict['tangent'] = self.state_n.tangent
+      mydict['temperature'] = self.state_n.temperature
+      mydict['displacements'] = self.state_n.displacements
+      mydict['time'] = self.state_n.time
+      mydict['energy'] = self.state_n.energy
+      mydict['dissipation'] = self.state_n.dissipation
+      mydict['force'] = self.state_n.force
+      mydict['stiffness'] = self.state_n.stiffness
+      sio.savemat('/mnt/fb7cc2c9-e328-4f3f-a6f8-918195722408/srlife/examples/gemasolar/state_%s.mat'%i,mydict)
 
 class SpringNetwork(nx.MultiGraph):
   """
