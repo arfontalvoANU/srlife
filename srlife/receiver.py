@@ -322,7 +322,7 @@ class Tube:
       page (Optional[bool]): store results on disk if True
   """
   def __init__(self, outer_radius, thickness, height, nr, nt, nz, 
-      T0 = 0.0, page = False):
+      T0 = 0.0, page = False, folder='.',load_state0=False,savestate=False):
     """ Initialize the tube
     """
     self.r = outer_radius
@@ -345,6 +345,9 @@ class Tube:
 
     self.T0 = T0
     self.page = page
+    self.folder = folder
+    self.load_state0 = load_state0
+    self.savestate = savestate
 
   def copy_results(self, other):
     """ Copy the results fields from one tube to another

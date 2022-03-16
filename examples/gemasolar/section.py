@@ -8,7 +8,7 @@ from multiprocessing import Pool
 from thermal import *
 from mechanical import *
 
-def run_gemasolar_equinox(panel,position,nthreads,clearSky):
+def run_gemasolar_equinox(panel,position,nthreads,clearSky,load_state0,savestate):
 	model = receiver_cyl(Ri = 20.0/2000, Ro = 22.4/2000)
 
 	# Importing data from Modelica
@@ -84,7 +84,7 @@ def run_gemasolar_equinox(panel,position,nthreads,clearSky):
 		days=1)
 
 	# Running srlife
-	life = run_problem(position, model.nbins, nthreads=nthreads)
+	life = run_problem(position, model.nbins, nthreads=nthreads, load_state0=load_state0, savestate=savestate)
 
 	# Saving thermal results
 	scipy.io.savemat('st_nash_tube_stress_res.mat',{
@@ -126,7 +126,7 @@ def run_gemasolar_equinox(panel,position,nthreads,clearSky):
 	# Show
 	plt.savefig('st_nash_tube_stress_fig.png')
 
-def run_gemasolar(panel,position,days,nthreads,clearSky):
+def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate):
 	model = receiver_cyl(Ri = 20.0/2000, Ro = 22.4/2000)
 
 	# Importing data from Modelica
@@ -196,7 +196,7 @@ def run_gemasolar(panel,position,days,nthreads,clearSky):
 		days=days)
 
 	# Running srlife
-	life = run_problem(position, model.nbins, nthreads=nthreads)
+	life = run_problem(position, model.nbins, nthreads=nthreads, load_state0=load_state0, savestate=savestate)
 
 	# Saving thermal results
 	scipy.io.savemat('st_nash_tube_stress_res.mat',{
@@ -246,13 +246,15 @@ if __name__=='__main__':
 	parser.add_argument('--nthreads', type=int, default=4, help='Number of processors. Default=4')
 	parser.add_argument('--Equinox', type=bool, default=False, help='Run the equinox cycle only')
 	parser.add_argument('--clearSky', type=bool, default=False, help='Run clear sky DNI (requires to have the solartherm results)')
+	parser.add_argument('--load_state0', type=bool, default=False, help='Load state from a previous simulation')
+	parser.add_argument('--savestate', type=bool, default=False, help='Save the last state of the last simulated day')
 	args = parser.parse_args()
 
 	tinit = time.time()
 	if args.Equinox:
-		run_gemasolar_equinox(args.panel,args.position,args.nthreads,args.clearSky)
+		run_gemasolar_equinox(args.panel,args.position,args.nthreads,args.clearSky,args.load_state0,args.savestate)
 	else:
-		run_gemasolar(args.panel,args.position,args.days,args.nthreads,args.clearSky)
+		run_gemasolar(args.panel,args.position,args.days,args.nthreads,args.clearSky,args.load_state0,args.savestate)
 	seconds = time.time() - tinit
 	m, s = divmod(seconds, 60)
 	h, m = divmod(m, 60)

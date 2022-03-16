@@ -54,7 +54,7 @@ def setup_problem(Ro, th, H_rec, Nr, Nt, Nz, times, fluid_temp, h_flux, pressure
 		fileName = '%s/model.hdf5'%folder
 	model.save('model.hdf5')
 
-def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4):
+def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4,load_state0=False,savestate=False):
 	# Load the receiver we previously saved
 	if folder==None:
 		fileName = 'model.hdf5'
@@ -70,7 +70,10 @@ def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4):
 	# This is not recommended for actual design evaluation
 	for panel in model.panels.values():
 		for tube in panel.tubes.values():
-			tube.make_2D(tube.h/nz*zpos)
+			tube.make_1D(tube.h/nz*zpos,0)
+			tube.folder='.'
+			tube.load_state0=load_state0
+			tube.savestate=savestate
 
 	# Setup some solver parameters
 	params = solverparams.ParameterSet()

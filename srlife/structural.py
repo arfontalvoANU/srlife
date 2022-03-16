@@ -22,6 +22,7 @@ from skfem.element.discrete_field import DiscreteField
 from neml import block
 
 from srlife import solverparams
+import scipy.io as sio
 
 class TubeSolver(ABC):
   """
@@ -373,9 +374,8 @@ class PythonTubeSolver(TubeSolver):
     for f,d in zip(fields, data):
       for ind,o in zip(inds,order):
         tube.quadrature_results[f+o][i] = self._fea2tube_element(tube, d[ind])
-    
-    import scipy.io as sio
-    sio.savemat('/mnt/fb7cc2c9-e328-4f3f-a6f8-918195722408/srlife/examples/gemasolar/quadrature_results.mat',tube.quadrature_results)
+    if tube.savestate:
+      sio.savemat('%s/quadrature_results.mat'%tube.folder,tube.quadrature_results)
     
     tube.quadrature_results["temperature"][i] = self._fea2tube_element(tube, state.temperature)
 
