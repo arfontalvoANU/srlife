@@ -70,7 +70,7 @@ def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4,load_state0=Fal
 	# This is not recommended for actual design evaluation
 	for panel in model.panels.values():
 		for tube in panel.tubes.values():
-			tube.make_1D(tube.h/nz*zpos,0)
+			tube.make_2D(tube.h/nz*zpos)
 			tube.folder='.'
 			tube.load_state0=load_state0
 			tube.savestate=savestate
