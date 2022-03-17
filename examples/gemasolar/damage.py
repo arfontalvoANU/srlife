@@ -181,7 +181,7 @@ def calculate_damage(fileName,update,material,paneln,tuben):
 
 if __name__=='__main__':
 	parser = argparse.ArgumentParser(description='Estimates average damage of a representative tube in a receiver panel')
-	parser.add_argument('--filename', type=str, default='model_solved', help='hdf5 containing the final results')
+	parser.add_argument('--filename', type=str, default='results', help='hdf5 containing the final results')
 	parser.add_argument('--material', type=str, default='A230', help='Damage material')
 	parser.add_argument('--panel', type=str, default='panel0', help='Panel to calculate damage')
 	parser.add_argument('--tube', type=str, default='tube0', help='Tube to calculate damage')

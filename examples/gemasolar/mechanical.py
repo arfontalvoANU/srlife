@@ -54,7 +54,7 @@ def setup_problem(Ro, th, H_rec, Nr, Nt, Nz, times, fluid_temp, h_flux, pressure
 		fileName = '%s/model.hdf5'%folder
 	model.save('model.hdf5')
 
-def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4,load_state0=False,savestate=False):
+def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4,load_state0=False,savestate=False,resfolder='.'):
 	# Load the receiver we previously saved
 	if folder==None:
 		fileName = 'model.hdf5'
@@ -71,7 +71,7 @@ def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4,load_state0=Fal
 	for panel in model.panels.values():
 		for tube in panel.tubes.values():
 			tube.make_2D(tube.h/nz*zpos)
-			tube.folder='.'
+			tube.folder=resfolder
 			tube.load_state0=load_state0
 			tube.savestate=savestate
 
@@ -101,7 +101,7 @@ def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4,load_state0=Fal
 	# Actually solve for life
 	try:
 		life = solver.solve_life()
-		model.save('model_solved.hdf5')
+		model.save('%s/results.hdf5'%resfolder)
 	except RuntimeError:
 		life = np.empty(3)
 		life[:] = np.NaN
