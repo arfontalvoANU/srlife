@@ -163,7 +163,12 @@ class receiver_cyl:
 		Ti = (To + hf*self.Ri*self.ln/self.kp*Tf)/(1 + hf*self.Ri*self.ln/self.kp)
 		qnet = hf*(Ti - Tf)
 		Qnet = qnet.sum(axis=1)*self.Ri*self.dt*self.dz
-		self.qnet = np.concatenate((qnet[:,1:],qnet[:,::-1]),axis=1)
+		net_zero = np.where(Qnet<0)[0]
+		Qnet[net_zero] = 0.0
+		_qnet = np.concatenate((qnet[:,1:],qnet[:,::-1]),axis=1)
+		_qnet[net_zero,:] = 0.0
+		self.qnet = _qnet
+#		self.qnet = np.concatenate((qnet[:,1:],qnet[:,::-1]),axis=1)
 #		qem = self.em*self.sigma*(pow(To,4) - pow(Tamb,4))*self.dt
 #		qem = qem.sum(axis=1)
 #		a = (h_ext[:,0]*self.Ro*np.log(self.Ro) + self.kp)/(hf[:,0]*self.Ri*np.log(self.Ri) + self.kp)*(np.pi*hf[:,0]*self.Ri/self.Ro)
