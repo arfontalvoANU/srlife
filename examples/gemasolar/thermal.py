@@ -87,6 +87,13 @@ class receiver_cyl:
 					absc = (names[i], descr[i])
 		del mat
 
+	def density(self,T):
+		if self.coolant == 'salt':
+			d = 2090.0 - 0.636 * (T - 273.15)
+		else:
+			d = 219.0 + 275.32 * (1.0 - T / 2503.7) + 511.58 * np.sqrt(1.0 - T / 2503.7)
+		return d
+
 	def dynamicViscosity(self,T):
 		if self.coolant == 'salt':
 			eta = 0.001 * (22.714 - 0.120 * (T - 273.15) + 2.281e-4 * pow((T - 273.15),2) - 1.474e-7 * pow((T - 273.15),3))
@@ -107,6 +114,41 @@ class receiver_cyl:
 		else:
 			C = 1000 * (1.6582 - 8.4790e-4 * T + 4.4541e-7 * pow(T,2) - 2992.6 * pow(T,-2))
 		return C
+
+	def htfs(self, v_flow, Tf):
+		# Flow and thermal variables
+		"""
+			hf: Heat transfer coefficient due to internal forced-convection
+			mu: HTF dynamic viscosity (Pa-s)
+			kf: HTF thermal conductivity (W/m-K)
+			C:  HTF specific heat capacity (J/kg-K)
+			Re: HTF Reynolds number
+			Pr: HTF Prandtl number
+			Nu: Nusselt number due to internal forced convection
+		"""
+
+		# HTF thermo-physical properties
+		mu = self.dynamicViscosity(Tf)                 # HTF dynamic viscosity (Pa-s)
+		kf = self.thermalConductivity(Tf)              # HTF thermal conductivity (W/m-K)
+		C = self.specificHeatCapacityCp(Tf)            # HTF specific heat capacity (J/kg-K)
+		rho = self.density(Tf)                         # HTF specific heat capacity (J/kg-K)
+
+		# HTF internal flow variables
+		Re = rho * v_flow * self.d/ mu                 # HTF Reynolds number
+		Pr = mu * C / kf                               # HTF Prandtl number
+
+		if self.coolant == 'salt':
+			Nu = 0.023 * pow(Re, 0.8) * pow(Pr, 0.4)
+		else:
+			Nu = 5.6 + 0.0165 * pow(Re*Pr, 0.85) * pow(Pr, 0.01);
+
+		# HTF internal heat transfer coefficient
+		if self.R_fouling==0:
+			hf = Nu * kf / self.d
+		else:
+			hf = Nu * kf / self.d / (1. + Nu * kf / self.d * self.R_fouling)
+
+		return hf
 
 	def Temperature(self, m_flow, Tf, Tamb, CG, h_ext):
 		# Flow and thermal variables
