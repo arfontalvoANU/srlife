@@ -157,11 +157,6 @@ if __name__=='__main__':
 	args = parser.parse_args()
 
 	tinit = time.time()
-	args.panel = 4
-	args.position = 30
-	args.days = [78,79]
-	args.clearSky = True
-	args.nrepeats = 30
 	run_gemasolar(args.panel,args.position,args.days,args.nthreads,args.clearSky,args.load_state0,args.savestate,args.nrepeats)
 	seconds = time.time() - tinit
 	m, s = divmod(seconds, 60)
