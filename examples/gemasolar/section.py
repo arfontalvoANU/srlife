@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import os, scipy.io, argparse
+from scipy.interpolate import interp1d, RegularGridInterpolator
 import time
 from functools import partial
 from multiprocessing import Pool
@@ -9,7 +10,7 @@ from thermal import *
 from mechanical import *
 from tqdm import tqdm
 
-def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate,nrepeats):
+def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate,nrepeats,refineTime=False):
 	model = receiver_cyl(Ri = 20.0/2000, Ro = 22.4/2000)   # Instantiating model with the gemasolar geometry
 	nr = 9                                                 # Number of radial nodes
 
@@ -83,6 +84,40 @@ def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate,nr
 	else:
 		ndays = (days[1]-days[0])*max(nrepeats,1)
 
+	if refineTime and ndays==1:
+		# New time discretization
+		inds = np.where(m_flow_tb>0)[0]
+		t_full = times[inds[1:-1]]                                     # Time steps for full-load operation
+
+		t_stup = np.linspace(t_full[0]-1, t_full[0], 11)               # Time steps for start-up
+		t_sdwn = np.linspace(t_full[-1], t_full[-1]+1, 11)             # Time steps for shut-down
+
+		times_bc = np.sort(np.unique(np.concatenate((t_stup,times,t_sdwn))))
+		theta_bc = np.linspace(0,2*np.pi,2*model.nt-1)
+		z_bc = np.linspace(0,model.H_rec,model.nbins)
+
+		# Interpolation functions
+		fflux = RegularGridInterpolator((times, theta_bc, z_bc), qnet[:,:,lb:ub], bounds_error=False, fill_value=0)
+		h_flux = lambda t, theta, z: fflux((t,theta,z))
+
+		ffluid = RegularGridInterpolator((times, z_bc), Tf[:,lb:ub], bounds_error=False, fill_value=0)
+		fluid_temp = lambda t, z: ffluid((t,z))
+
+		fflow = interp1d(times, m_flow_tb, bounds_error=False, fill_value=0)
+		mflow = lambda t: fflow(t)
+
+		# Meshgrid
+		time_s, theta_s, z_s = np.meshgrid(times_bc, theta_bc, z_bc, indexing = 'ij')
+		time_h, z_h = np.meshgrid(times_bc, z_bc, indexing='ij')
+
+		flux = h_flux(time_s, theta_s, z_s)
+		temperature = fluid_temp(time_h, z_h)
+		pressure = np.where(mflow(times_bc)>0, 0.1, mflow(times_bc))
+	else:
+		times_bc = times
+		flux = qnet[:,:,lb:ub]
+		temperature = Tf[:,lb:ub]
+
 	# Creating the hdf5 model
 	setup_problem(
 		model.Ro,
@@ -91,9 +126,9 @@ def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate,nr
 		nr,
 		2*model.nt-1,
 		model.nbins,
-		times,
-		Tf[:,lb:ub],
-		qnet[:,:,lb:ub],
+		times_bc,
+		temperature,
+		flux,
 		pressure,
 		Tf[0,0],
 		days=ndays)
