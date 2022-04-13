@@ -219,7 +219,7 @@ class receiver_cyl:
 			BDp = self.Fourier(Ti[t,:])
 
 		# Fourier coefficients
-		self.s, self.e, self.Tbar_i, self.Tbar_o = self.stress(Ti,To)
+		self.s, self.e, self.Tbar_i, self.Tbar_o, self.BP, self.BPP = self.stress(Ti,To)
 		return Qnet
 
 	def Fourier(self,T):
@@ -232,17 +232,17 @@ class receiver_cyl:
 		strain = np.zeros(Ti.shape[0])
 		Tbar_i = np.zeros(Ti.shape[0])
 		Tbar_o = np.zeros(Ti.shape[0])
+		BP = np.zeros(Ti.shape[0])
+		BPP = np.zeros(Ti.shape[0])
 		for t in range(Ti.shape[0]):
 			BDp = self.Fourier(Ti[t,:])
 			BDpp = self.Fourier(To[t,:])
 			stress[t], strain[t] = self.Thermoelastic(To[t,0], self.Ro, 0., BDp, BDpp)
 			Tbar_i[t] = BDp[0]
 			Tbar_o[t] = BDpp[0]
-		stress = np.array(stress)
-		strain = np.array(strain)
-		Tbar_i = np.array(Tbar_i)
-		Tbar_o = np.array(Tbar_o)
-		return stress,strain,Tbar_i,Tbar_o
+			BP[t] = BDp[0]
+			BPP[t] = BDpp[0]
+		return stress,strain,Tbar_i,Tbar_o,BP,BPP
 
 	def Thermoelastic(self, T, r, theta, BDp, BDpp):
 		Tbar_i = BDp[0]; BP = BDp[1]; DP = BDp[2];
@@ -297,7 +297,7 @@ def setup_problem(Ro, th, H_rec, Nr, Nt, Nz, times, fluid_temp, h_flux, pressure
 	model = receiver.Receiver(period, days, panel_stiffness)              # Instatiating a receiver model
 
 	# Setup each of the two panels
-	tube_stiffness = "rigid"
+	tube_stiffness = "rigid"                                              # Tube stiffness (N/mm), could be also "rigid" or "disconnect"
 	panel_0 = receiver.Panel(tube_stiffness)
 
 	# Basic receiver geometry (Updated to Gemasolar)
@@ -443,6 +443,8 @@ def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate,nr
 	Ti = np.zeros((times.shape[0],2*model.nt-1,model.nz))
 	Tbar_i = np.zeros((times.shape[0],model.nz))
 	Tbar_o = np.zeros((times.shape[0],model.nz))
+	BP = np.zeros((times.shape[0],model.nz))
+	BPP = np.zeros((times.shape[0],model.nz))
 
 	# Running thermal model
 	for k in tqdm(range(model.nz)):
@@ -454,6 +456,8 @@ def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate,nr
 		Ti[:,:,k] = model.Ti
 		Tbar_i[:,k] = model.Tbar_i
 		Tbar_o[:,k] = model.Tbar_o
+		BP[:,k] = model.BP
+		BPP[:,k] = model.BPP
 
 	# Getting internal pressure
 	pressure = np.where(m_flow_tb>0, 0.1, m_flow_tb)
@@ -470,16 +474,56 @@ def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate,nr
 	dT_bottom = Tf[time_CGmax,ub] - T_amb
 	Tbar_i = Tbar_i[time_CGmax,lb:ub]
 	Tbar_o = Tbar_o[time_CGmax,lb:ub]
-	f = []
+	B1_i = BP[time_CGmax,lb:ub]
+	B1_o = BPP[time_CGmax,lb:ub]
+	N = model.nbins+11           # Nodes = Nbins + 1 + 7(top) + 3(bottom)
+	J = N-1
+	K1  = np.zeros((3*N,3*N))
+	K2 = np.zeros((3*N,3*N))
+	F1 = np.zeros(3*N)
+	F2 = np.zeros(3*N)
 	area = np.pi*(model.Ro**2 - model.Ri**2)
-	for n in range(model.nbins+11):           # Nodes = Nbins + 1 + 7(top) + 3(bottom)
-		if n<8:
-			f.append([model.l*model.E*area*dT_top,0,0])
-		elif n>(model.nbins+7):
-			f.append([model.l*model.E*area*dT_bottom,0,0])
+	I = 0.5*np.pi*(model.Ro**4 - model.Ri**4)
+	L = np.concatenate((0.2*np.ones(1), 0.15*np.ones(2),0.43*np.ones(4),0.21*np.ones(51),0.24*np.ones(4)))
+	angles = np.concatenate((-np.pi/2*np.ones(1), -np.pi/3*np.ones(1), np.zeros(1), np.pi/6*np.ones(4), np.zeros(51), -np.pi/6*np.ones(4)))
+	for n in range(J):
+		# Transformation matrix
+		Te = np.identity(6)
+		Te[0,0] = np.cos(angles[n]); Te[1,1] = np.cos(angles[n]); Te[3,3] = np.cos(angles[n]); Te[4,4] = np.cos(angles[n])
+		Te[1,0] = np.sin(angles[n]); Te[0,1] =-np.sin(angles[n]); Te[4,3] = np.sin(angles[n]); Te[3,4] =-np.sin(angles[n])
+		# Nodal forces
+		dummyF = np.zeros(6)
+		if n<7:
+			dummyF[0:3] = np.array([ model.l*model.E*area*dT_top,0,0])  #f1
+			dummyF[3:6] = np.array([-model.l*model.E*area*dT_top,0,0])  #f2
+		elif n>(model.nbins+6):
+			dummyF[0:3] = np.array([ model.l*model.E*area*dT_bottom,0,0])  #f1
+			dummyF[3:6] = np.array([-model.l*model.E*area*dT_bottom,0,0])  #f2
 		else:
-			f.append([0.5*model.l*model.E*(2*area*(Tbar_o[n-8] - T_amb) + (area - 2*np.pi*model.Ri**2*model.ln)*(Tbar_i[n-8] - Tbar_o[n-8])/model.ln),0,0])
-	f = np.array(f).flatten()
+			z = n - 7
+			Ft = 0.5*model.l*model.E*(2*area*(Tbar_o[z] - T_amb) + (area - 2*np.pi*model.Ri**2*model.ln)*(Tbar_i[z] - Tbar_o[z])/model.ln)
+			Mt = np.pi/9*model.l*model.E*((B1_i[z]-B1_o[z])*(model.Ro**3 - model.Ri**3 + 3*model.Ri**3*model.ln)/model.ln + 3*(model.Ro**3 - model.Ri**3)*B1_o[z])
+			dummyF[0:3] = np.array([ Ft,0, Mt])  #f1
+			dummyF[3:6] = np.array([-Ft,0,-Mt])  #f2
+		dummyF = np.dot(Te,dummyF)
+		F1[3*n  :3*n+3] = dummyF[0:3]
+		F2[3*n+3:3*n+6] = dummyF[3:6]
+
+		# Stiffness matrix
+		dummyK = np.zeros((6,6))
+		dummyK[0:3,0:3] = model.E*np.array([ area/L[n],0,0,0, 12*I/L[n]**3, 6*I/L[n]**2,0, 6*I/L[n]**2,4*I/L[n]]).reshape((3,3)) #k11
+		dummyK[0:3,3:6] = model.E*np.array([-area/L[n],0,0,0,-12*I/L[n]**3, 6*I/L[n]**2,0,-6*I/L[n]**2,2*I/L[n]]).reshape((3,3)) #k12
+		dummyK[3:6,0:3] = model.E*np.array([-area/L[n],0,0,0,-12*I/L[n]**3,-6*I/L[n]**2,0, 6*I/L[n]**2,2*I/L[n]]).reshape((3,3)) #k21
+		dummyK[3:6,3:6] = model.E*np.array([ area/L[n],0,0,0, 12*I/L[n]**3,-6*I/L[n]**2,0,-6*I/L[n]**2,4*I/L[n]]).reshape((3,3)) #k22
+		dummyK = np.linalg.multi_dot([Te,dummyK,np.transpose(Te)])
+
+		K1[3*n  :3*n+3, 3*n  :3*n+3] = dummyK[0:3,0:3]  #k11
+		K1[3*n  :3*n+3, 3*n+3:3*n+6] = dummyK[0:3,3:6]  #k12
+		K2[3*n+3:3*n+6, 3*n  :3*n+3] = dummyK[3:6,0:3]  #k21
+		K2[3*n+3:3*n+6, 3*n+3:3*n+6] = dummyK[3:6,3:6]  #k22
+
+	K = K1 + K2
+	f = F1 + F2
 
 	# Checking compatibility between times, days and period
 	ndays = (days[1]-days[0])*max(nrepeats,1)
@@ -500,7 +544,8 @@ def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate,nr
 	life = run_problem(position, model.nbins, nthreads=nthreads, load_state0=load_state0, savestate=savestate, resfolder=resfolder)
 
 	# Saving thermal results
-	scipy.io.savemat('%s/st_nash_tube_stress_res.mat'%resfolder,{"times":times,"fluid_temp":Tf,"CG":CG,"m_flow_tb":m_flow_tb,"pressure":pressure,"h_flux":qnet,"Ti":Ti,"fnodes":f})
+	scipy.io.savemat('%s/st_nash_tube_stress_res.mat'%resfolder,
+	                 {"times":times,"fluid_temp":Tf,"CG":CG,"m_flow_tb":m_flow_tb,"pressure":pressure,"h_flux":qnet,"Ti":Ti,"fnodes":f, "K":K, "K1":K1, "K2":K2, "dummyK":dummyK})
 
 	# Plotting thermal results
 	fig, axes = plt.subplots(2,2, figsize=(11,8))
