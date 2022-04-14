@@ -1,5 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib as mpl
+mpl.rcParams['text.usetex'] = True
+mpl.rcParams['font.size'] = 14
+mpl.rcParams['font.family'] = 'Times'
 import os, sys, math, scipy.io, argparse
 import time, ctypes
 from numpy.ctypeslib import ndpointer
@@ -297,7 +301,7 @@ def setup_problem(Ro, th, H_rec, Nr, Nt, Nz, times, fluid_temp, h_flux, pressure
 	model = receiver.Receiver(period, days, panel_stiffness)              # Instatiating a receiver model
 
 	# Setup each of the two panels
-	tube_stiffness = "rigid"                                              # Tube stiffness (N/mm), could be also "rigid" or "disconnect"
+	tube_stiffness = "disconnect"                                         # Tube stiffness (N/mm), could be also "rigid" or "disconnect"
 	panel_0 = receiver.Panel(tube_stiffness)
 
 	# Basic receiver geometry (Updated to Gemasolar)
@@ -318,16 +322,8 @@ def setup_problem(Ro, th, H_rec, Nr, Nt, Nz, times, fluid_temp, h_flux, pressure
 	tube_0.set_bc(receiver.HeatFluxBC(r_outer, height, nt, nz, times, h_flux), "outer")
 	tube_0.set_pressure_bc(receiver.PressureBC(times, pressure))
 
-	# Tube 1
-	tube_1 = receiver.Tube(r_outer, thickness, height, nr, nt, nz, T0 = T_base)
-	tube_1.set_times(times)
-	tube_1.set_bc(receiver.FixedTempBC(r_inner, height, nt, nz, times, fluid_temp), "inner")
-	tube_1.set_bc(receiver.HeatFluxBC(r_outer, height, nt, nz, times, h_flux), "outer")
-	tube_1.set_pressure_bc(receiver.PressureBC(times, pressure))
-
 	# Assign to panel 0
 	panel_0.add_tube(tube_0, "tube0")
-	panel_0.add_tube(tube_1, "tube1")
 
 	# Assign the panels to the receiver
 	model.add_panel(panel_0, "panel0")
@@ -383,15 +379,12 @@ def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4,load_state0=Fal
 		structural_solver, deformation_mat, damage_mat,
 		system_solver, damage_model, pset = params)
 
+	solver.add_heuristic(managers.CycleResetHeuristic())
+
 	# Actually solve for life
-	try:
-		life = solver.solve_life()
-		model.save('%s/results.hdf5'%resfolder)
-	except RuntimeError:
-		life = np.empty(3)
-		life[:] = np.NaN
-	print("Best estimate life position %d: %f daily cycles" % (zpos,life[0]))
-	result = np.append(life,zpos)
+	solver.solve_heat_transfer()
+	solver.solve_structural()
+	result = 1
 	return result
 
 def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate,nrepeats):
@@ -407,26 +400,37 @@ def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate,nr
 
 	# Importing times
 	times = model.data[:,0]
-
-	# Filtering times
-	index = []
-	_times = []
-	time_lb = days[0]*86400
-	time_ub = days[1]*86400+3600
-	for i in range(len(times)):
-		if times[i]%1800.==0 and times[i] not in _times and time_lb<=times[i] and times[i]<time_ub:
-			index.append(i)
-			_times.append(times[i])
-
-	# Importing flux
+	on_internal = model.data[:,model._vars['heliostatField.on_internal'][2]]
+	ele = model.data[:,model._vars['heliostatField.ele'][2]]
+	ele_min = model.data[:,model._vars['heliostatField.ele_min'][2]][0]
 	CG = model.data[:,model._vars['heliostatField.CG[1]'][2]:model._vars['heliostatField.CG[450]'][2]+1]
 	m_flow_tb = model.data[:,model._vars['heliostatField.m_flow_tb'][2]]
 	Tamb = model.data[:,model._vars['receiver.Tamb'][2]]
 	h_ext = model.data[:,model._vars['receiver.h_conv'][2]]
+	ele_zero = np.where(ele<ele_min)[0]
+	m_flow_tb[ele_zero] = 0.0
+	CG[ele_zero,:] = 0.0
+
+	# Filtering times
+	pre_index = []
+	pre_times = []
+	time_lb = days[0]*86400
+	time_ub = days[1]*86400+3600
+	for i,v in enumerate(times):
+		if v%1800.==0 and v not in pre_times and time_lb<=v and v<time_ub:
+			if ele[i]>0:
+				pre_index.append(i)
+				pre_times.append(v)
+
+	index = pre_index
+	t = 0
+	times = []
+	for i,v in enumerate(index):
+		times.append(t)
+		t += 0.5
 
 	# Getting inputs based on filtered times
-	times = times[index]/3600.
-	times = times.flatten()
+	times = np.array(times)
 	CG = CG[index,:]
 	m_flow_tb = m_flow_tb[index]
 	m_flow_zero = np.where(m_flow_tb<1e-4)[0]
@@ -467,70 +471,10 @@ def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate,nr
 	lb = model.nbins*(panel-1)
 	ub = lb + model.nbins
 
-	# Method to estimate the headers' stiffness
-	time_CGmax = int(np.floor(np.argmax(CG[:,lb:ub].flatten())/CG[:,lb:ub].shape[1]))
-	T_amb = Tamb[time_CGmax]
-	dT_top = Tf[time_CGmax,lb] - T_amb
-	dT_bottom = Tf[time_CGmax,ub] - T_amb
-	Tbar_i = Tbar_i[time_CGmax,lb:ub]
-	Tbar_o = Tbar_o[time_CGmax,lb:ub]
-	B1_i = BP[time_CGmax,lb:ub]
-	B1_o = BPP[time_CGmax,lb:ub]
-	N = model.nbins+11           # Nodes = Nbins + 1 + 7(top) + 3(bottom)
-	J = N-1
-	K1  = np.zeros((3*N,3*N))
-	K2 = np.zeros((3*N,3*N))
-	F1 = np.zeros(3*N)
-	F2 = np.zeros(3*N)
-	area = np.pi*(model.Ro**2 - model.Ri**2)
-	I = 0.5*np.pi*(model.Ro**4 - model.Ri**4)
-	L = np.concatenate((0.2*np.ones(1), 0.15*np.ones(2),0.43*np.ones(4),0.21*np.ones(51),0.24*np.ones(4)))
-	angles = np.concatenate((-np.pi/2*np.ones(1), -np.pi/3*np.ones(1), np.zeros(1), np.pi/6*np.ones(4), np.zeros(51), -np.pi/6*np.ones(4)))
-	for n in range(J):
-		# Transformation matrix
-		Te = np.identity(6)
-		Te[0,0] = np.cos(angles[n]); Te[1,1] = np.cos(angles[n]); Te[3,3] = np.cos(angles[n]); Te[4,4] = np.cos(angles[n])
-		Te[1,0] = np.sin(angles[n]); Te[0,1] =-np.sin(angles[n]); Te[4,3] = np.sin(angles[n]); Te[3,4] =-np.sin(angles[n])
-		# Nodal forces
-		dummyF = np.zeros(6)
-		if n<7:
-			dummyF[0:3] = np.array([ model.l*model.E*area*dT_top,0,0])  #f1
-			dummyF[3:6] = np.array([-model.l*model.E*area*dT_top,0,0])  #f2
-		elif n>(model.nbins+6):
-			dummyF[0:3] = np.array([ model.l*model.E*area*dT_bottom,0,0])  #f1
-			dummyF[3:6] = np.array([-model.l*model.E*area*dT_bottom,0,0])  #f2
-		else:
-			z = n - 7
-			Ft = 0.5*model.l*model.E*(2*area*(Tbar_o[z] - T_amb) + (area - 2*np.pi*model.Ri**2*model.ln)*(Tbar_i[z] - Tbar_o[z])/model.ln)
-			Mt = np.pi/9*model.l*model.E*((B1_i[z]-B1_o[z])*(model.Ro**3 - model.Ri**3 + 3*model.Ri**3*model.ln)/model.ln + 3*(model.Ro**3 - model.Ri**3)*B1_o[z])
-			dummyF[0:3] = np.array([ Ft,0, Mt])  #f1
-			dummyF[3:6] = np.array([-Ft,0,-Mt])  #f2
-		dummyF = np.dot(Te,dummyF)
-		F1[3*n  :3*n+3] = dummyF[0:3]
-		F2[3*n+3:3*n+6] = dummyF[3:6]
-
-		# Stiffness matrix
-		dummyK = np.zeros((6,6))
-		dummyK[0:3,0:3] = model.E*np.array([ area/L[n],0,0,0, 12*I/L[n]**3, 6*I/L[n]**2,0, 6*I/L[n]**2,4*I/L[n]]).reshape((3,3)) #k11
-		dummyK[0:3,3:6] = model.E*np.array([-area/L[n],0,0,0,-12*I/L[n]**3, 6*I/L[n]**2,0,-6*I/L[n]**2,2*I/L[n]]).reshape((3,3)) #k12
-		dummyK[3:6,0:3] = model.E*np.array([-area/L[n],0,0,0,-12*I/L[n]**3,-6*I/L[n]**2,0, 6*I/L[n]**2,2*I/L[n]]).reshape((3,3)) #k21
-		dummyK[3:6,3:6] = model.E*np.array([ area/L[n],0,0,0, 12*I/L[n]**3,-6*I/L[n]**2,0,-6*I/L[n]**2,4*I/L[n]]).reshape((3,3)) #k22
-		dummyK = np.linalg.multi_dot([Te,dummyK,np.transpose(Te)])
-
-		K1[3*n  :3*n+3, 3*n  :3*n+3] = dummyK[0:3,0:3]  #k11
-		K1[3*n  :3*n+3, 3*n+3:3*n+6] = dummyK[0:3,3:6]  #k12
-		K2[3*n+3:3*n+6, 3*n  :3*n+3] = dummyK[3:6,0:3]  #k21
-		K2[3*n+3:3*n+6, 3*n+3:3*n+6] = dummyK[3:6,3:6]  #k22
-
-	K = K1 + K2
-	f = F1 + F2
-
 	# Checking compatibility between times, days and period
 	ndays = (days[1]-days[0])*max(nrepeats,1)
 	tm = np.mod(times, 24)
 	inds = list(np.where(tm == 0)[0])
-	if len(inds) != (ndays + 1):
-		raise ValueError("Tube times not compatible with the receiver number of days and cycle period!")
 
 	# Creating results folder
 	resfolder = os.path.join(os.getcwd(),'results')
@@ -545,35 +489,29 @@ def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate,nr
 
 	# Saving thermal results
 	scipy.io.savemat('%s/st_nash_tube_stress_res.mat'%resfolder,
-	                 {"times":times,"fluid_temp":Tf,"CG":CG,"m_flow_tb":m_flow_tb,"pressure":pressure,"h_flux":qnet,"Ti":Ti,"fnodes":f, "K":K, "K1":K1, "K2":K2, "dummyK":dummyK})
+	                 {"times":times,"fluid_temp":Tf,"CG":CG,"m_flow_tb":m_flow_tb,"pressure":pressure,"h_flux":qnet,"Ti":Ti})
 
 	# Plotting thermal results
 	fig, axes = plt.subplots(2,2, figsize=(11,8))
 	# HTF temperature at several locations
 	for i in range(9):
-		pos = i*model.nbins
+		pos = i*model.nbins + int(model.nbins/2)
 		axes[0,0].plot(times,Tf[:,pos], label='z[%s]'%pos)
-	axes[0,0].set_ylabel('HTF temperature (K)')
-	axes[0,0].set_xlabel('Time [d]')
-	axes[0,0].legend(loc='best', frameon=False)
+		axes[1,1].plot(times,stress[:,pos])
+		axes[1,0].plot(times,CG[:,pos])
+	axes[0,0].set_ylabel(r'HTF temperature (K)')
+	axes[0,0].set_xlabel(r'Time (d)')
 	# Mass flow rate
 	axes[0,1].plot(times,m_flow_tb)
-	axes[0,1].set_ylabel('Mass flow rate (kg/s)')
-	axes[0,1].set_xlabel('Time [d]')
+	axes[0,1].set_ylabel(r'Mass flow rate (kg/s)')
+	axes[0,1].set_xlabel(r'Time (d)')
 	# Concentrated solar fluxes
-	for i in range(9):
-		pos = i*model.nbins
-		axes[1,0].plot(times,CG[:,pos], label='z[%s]'%pos)
-	axes[1,0].set_ylabel('CG (W/m2)')
-	axes[1,0].set_xlabel('Time [d]')
-	axes[1,0].legend(loc='best', frameon=False)
+	axes[1,0].set_ylabel(r'CG (W/m$^2$)')
+	axes[1,0].set_xlabel(r'Time (d)')
 	# Equivalent stress
-	for i in range(9):
-		pos = i*model.nbins
-		axes[1,1].plot(times,stress[:,pos], label='z[%s]'%pos)
-	axes[1,1].set_ylabel('Equivalent stress [MPa]')
-	axes[1,1].set_xlabel('Time [d]')
-	axes[1,1].legend(loc='best', frameon=False)
+	axes[1,1].set_ylabel(r'$\sigma_\mathrm{eq}$ [MPa]')
+	axes[1,1].set_xlabel('Time (d)')
+	axes[0,0].legend(bbox_to_anchor=(0,1.02,1,0.2), mode="expand", loc="lower left",borderaxespad=0, ncol=3, frameon=False)
 	# Show
 	plt.savefig('%s/st_nash_tube_stress_fig.png'%resfolder)
 
