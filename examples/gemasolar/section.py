@@ -527,8 +527,8 @@ def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate,nr
 	axes[1,0].set_ylabel(r'CG (W/m$^2$)')
 	axes[1,0].set_xlabel(r'Time (d)')
 	# Equivalent stress
-	axes[1,1].set_ylabel(r'$\sigma_\mathrm{eq}$ [MPa]')
-	axes[1,1].set_xlabel('Time (d)')
+	axes[1,1].set_ylabel(r'$\sigma_\mathrm{eq}$ (MPa)')
+	axes[1,1].set_xlabel(r'Time (d)')
 	axes[0,0].legend(bbox_to_anchor=(0,1.02,1,0.2), mode="expand", loc="lower left",borderaxespad=0, ncol=3, frameon=False)
 	# Show
 	plt.savefig('%s/st_nash_tube_stress_fig.png'%resfolder)
