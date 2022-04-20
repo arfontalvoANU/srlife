@@ -407,27 +407,20 @@ def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate,nr
 	nr = 9                                                 # Number of radial nodes
 
 	# Importing data from Modelica
-	if clearSky:
-		fileName = 'GemasolarSystemOperationCS_res.mat'
-	else:
-		fileName = 'GemasolarSystemOperation_res.mat'
+	fileName = 'GemasolarSystemOperation_res.mat'
 	model.import_mat(fileName)
 
 	# Importing times
 	times = model.data[:,0]
-	on_internal = model.data[:,model._vars['heliostatField.on_internal'][2]]
 	ele = model.data[:,model._vars['heliostatField.ele'][2]]
-	ele_min = model.data[:,model._vars['heliostatField.ele_min'][2]][0]
-	CG = model.data[:,model._vars['heliostatField.CG[1]'][2]:model._vars['heliostatField.CG[450]'][2]+1]
-	m_flow_tb = model.data[:,model._vars['heliostatField.m_flow_tb'][2]]
 	Tamb = model.data[:,model._vars['receiver.Tamb'][2]]
 	h_ext = model.data[:,model._vars['receiver.h_conv'][2]]
-	ele_zero = np.where(ele<ele_min)[0]
-	field_off = np.where(on_internal<1)[0]
-	m_flow_tb[ele_zero] = 0.0
-	CG[ele_zero,:] = 0.0
-	m_flow_tb[field_off] = 0.0
-	CG[field_off,:] = 0.0
+	if not clearSky:
+		CG = model.data[:,model._vars['heliostatField.CG[1]'][2]:model._vars['heliostatField.CG[450]'][2]+1]
+		m_flow_tb = model.data[:,model._vars['heliostatField.m_flow_tb'][2]]
+	else:
+		CG = model.data[:,model._vars['heliostatField.CGCS[1]'][2]:model._vars['heliostatField.CGCS[450]'][2]+1]
+		m_flow_tb = model.data[:,model._vars['heliostatField.m_flow_tb_cs'][2]]
 
 	# Filtering times
 	pre_index = []
@@ -436,19 +429,14 @@ def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate,nr
 	time_ub = days[1]*86400+3600
 	for i,v in enumerate(times):
 		if v%1800.==0 and v not in pre_times and time_lb<=v and v<time_ub:
-			if ele[i]>0:
+			if ele[i]>0 or v%86400.==0. or v==0:
 				pre_index.append(i)
 				pre_times.append(v)
 
 	index = pre_index
-	t = 0
-	times = []
-	for i,v in enumerate(index):
-		times.append(t)
-		t += 0.5
 
 	# Getting inputs based on filtered times
-	times = np.array(times)
+	times = times[index]/3600.
 	CG = CG[index,:]
 	m_flow_tb = m_flow_tb[index]
 	m_flow_zero = np.where(m_flow_tb<1e-4)[0]
