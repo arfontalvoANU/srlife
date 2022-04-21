@@ -1,3 +1,4 @@
+import shutil
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib as mpl
@@ -402,7 +403,7 @@ def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4,load_state0=Fal
 	result = 1
 	return result
 
-def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate,nrepeats):
+def pre_processing_gemasolar(clearSky):
 	model = receiver_cyl(Ri = 20.0/2000, Ro = 22.4/2000)   # Instantiating model with the gemasolar geometry
 	nr = 9                                                 # Number of radial nodes
 
@@ -423,30 +424,85 @@ def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate,nr
 		m_flow_tb = model.data[:,model._vars['heliostatField.m_flow_tb_cs'][2]]
 
 	# Filtering times
-	pre_index = []
+	index = []
 	pre_times = []
-	time_lb = days[0]*86400
-	time_ub = days[1]*86400+3600
+	time_lb = 0
+	time_ub = 365*86400
 	for i,v in enumerate(times):
-		if v%1800.==0 and v not in pre_times and time_lb<=v and v<time_ub:
-			if ele[i]>0 or v%86400.==0. or v==0:
-				pre_index.append(i)
-				pre_times.append(v)
-
-	index = pre_index
+		if v%1800.==0 and v not in pre_times and time_lb<=v and v<=time_ub:
+			index.append(i)
+			pre_times.append(v)
 
 	# Getting inputs based on filtered times
 	times = times[index]/3600.
 	CG = CG[index,:]
 	m_flow_tb = m_flow_tb[index]
-	m_flow_zero = np.where(m_flow_tb<1e-4)[0]
-	m_flow_tb[m_flow_zero] = 1e-4
 	Tamb = Tamb[index]
 	h_ext = h_ext[index]
+
+	# Getting internal pressure
+	p_max = 1.5 # MPa
+	pressure = np.where(m_flow_tb>0, p_max, m_flow_tb)
+	pressure = pressure.flatten()
+
+	state = 0
+	times_new = np.array([0])
+	for i,t in enumerate(times):
+		if state==0 and (t%24==0  or (t-23)==0 or (t-1)%24==0 or (t-23)%24==0):
+			times_new = np.append(times_new, t)
+		elif state==0 and m_flow_tb[i]>0:
+			state=1
+			times_new = np.append(times_new,np.arange(times[i-1],times[i],0.1))
+		elif state==1 and m_flow_tb[i]>0:
+			state=2
+			times_new = np.append(times_new, [times[i-1],times[i]])
+		elif state==2 and m_flow_tb[i]>0:
+			times_new = np.append(times_new, t)
+		elif state==1 and m_flow_tb[i]==0:
+			state=3
+			times_new = np.append(times_new,np.arange(times[i-1],times[i],0.1))
+		elif state==2 and m_flow_tb[i]==0:
+			state=3
+			times_new = np.append(times_new,np.arange(times[i-1],times[i],0.1))
+		elif state==3 and m_flow_tb[i]==0:
+			state=0
+			times_new = np.append(times_new, t)
+		elif state==3 and m_flow_tb[i]>0:
+			state=1
+			times_new = np.append(times_new,np.arange(times[i-1],times[i],0.1))
+	times_refined = np.unique(times_new)
+	z_bc = np.linspace(1,model.nz,model.nz)
+
+	interp_mflow = interp1d(times, m_flow_tb, bounds_error=False, fill_value=0)
+	fun_mflow = lambda t: interp_mflow(t)
+
+	interp_Tamb = interp1d(times, Tamb, bounds_error=False, fill_value=0)
+	fun_Tamb = lambda t: interp_Tamb(t)
+
+	interp_h_ext = interp1d(times, h_ext, bounds_error=False, fill_value=0)
+	fun_h_ext = lambda t: interp_h_ext(t)
+
+	interp_pressure = interp1d(times, pressure, bounds_error=False, fill_value=0)
+	fun_pressure = lambda t: interp_pressure(t)
+
+	interp_CG = RegularGridInterpolator((times, z_bc), CG, bounds_error=False, fill_value=0)
+	fun_CG = lambda t, z: interp_CG((t,z))
+
+	times_refined_2d, z_bc_2d = np.meshgrid(times_refined, z_bc, indexing='ij')
+
+	times = times_refined
+	m_flow_tb = fun_mflow(times_refined)
+	Tamb = fun_Tamb(times_refined)
+	h_ext = fun_h_ext(times_refined)
+	pressure = fun_pressure(times_refined)
+	CG = fun_CG(times_refined_2d, z_bc_2d)
+
 
 	# Instantiating variables
 	stress = np.zeros((times.shape[0],model.nz))
 	Tf = model.T_in*np.ones((times.shape[0],model.nz+1))
+	m_flow_zero = np.where(m_flow_tb<1e-4)[0]
+	m_flow_tb[m_flow_zero] = 1e-4
 	for i in m_flow_zero:
 		Tf[i,:] = Tamb[i]*np.ones((model.nz+1,))
 	qnet = np.zeros((times.shape[0],2*model.nt-1,model.nz))
@@ -469,57 +525,106 @@ def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate,nr
 		BP[:,k] = model.BP
 		BPP[:,k] = model.BPP
 
-	# Getting internal pressure
-	pressure = np.where(m_flow_tb>0, 0.1, m_flow_tb)
-	pressure = pressure.flatten()
+	mydict={}
+	mydict['Ro'] = model.Ro
+	mydict['thickness'] = model.thickness
+	mydict['H_rec'] = model.H_rec
+	mydict['nr'] = nr
+	mydict['nt'] = 2*model.nt-1
+	mydict['nbins'] = model.nbins
+	mydict['times'] = times
+	mydict['Ti'] = Ti
+	mydict['qnet'] = qnet
+	mydict['pressure'] = pressure
+	mydict['Tbase'] = Tamb[0]
+	mydict['CG'] = CG
+	mydict['m_flow_tb'] = m_flow_tb
+	mydict['Tamb'] = Tamb
+	mydict['h_ext'] = h_ext
 
-	# Selecting panel boundaries (inlet and outlet)
-	lb = model.nbins*(panel-1)
-	ub = lb + model.nbins
+	if clearSky:
+		scipy.io.savemat('input_clear_sky.mat',mydict)
+	else:
+		scipy.io.savemat('input_tmy_data.mat',mydict)
 
-	# Checking compatibility between times, days and period
-	ndays = (days[1]-days[0])*max(nrepeats,1)
-	tm = np.mod(times, 24)
-	inds = list(np.where(tm == 0)[0])
+def run_gemasolar(clearSky,days,panel,position,nthreads,load_state0,savestate):
+	if clearSky:
+		mydict = scipy.io.loadmat('input_clear_sky.mat')
+		case = 'clear'
+	else:
+		mydict = scipy.io.loadmat('input_tmy_data.mat')
+		case = 'tmy'
 
-	# Creating results folder
 	resfolder = os.path.join(os.getcwd(),'results')
 	if not os.path.isdir(resfolder):
 		os.mkdir(resfolder)
 
+	Ro = float(mydict['Ro'])
+	thickness = float(mydict['thickness'])
+	H_rec = float(mydict['H_rec'])
+	nr = int(mydict['nr'])
+	nt = int(mydict['nt'])
+	nbins = int(mydict['nbins'])
+
+	times = mydict['times'].flatten()
+	index = np.where((times>=days[0]*24) & (times<=days[1]*24))[0]
+
+	# Selecting panel boundaries (inlet and outlet)
+	lb = nbins*(panel-1)
+	ub = lb + nbins
+	ndays = days[1] - days[0]
+	tm = np.mod(times, 24)
+	inds = list(np.where(tm == 0)[0])
+
 	# Creating the hdf5 model
-	setup_problem(model.Ro,model.thickness,model.H_rec,nr,2*model.nt-1,model.nbins,times,Ti[:,:,lb:ub],qnet[:,:,lb:ub],pressure,Tamb[0],days=ndays)
+	setup_problem(Ro,
+	              thickness,
+	              H_rec,
+	              nr,
+	              nt,
+	              nbins,
+	              times[index],
+	              mydict['Ti'][index,:,lb:ub],
+	              mydict['qnet'][index,:,lb:ub],
+	              mydict['pressure'].flatten()[index],
+	              T_base = mydict['Tbase'][0],
+	              days=ndays)
 
+	if days[0]>0:
+		load_state0 = True
 	# Running srlife
-	life = run_problem(position, model.nbins, nthreads=nthreads, load_state0=load_state0, savestate=savestate, resfolder=resfolder)
+	life = run_problem(
+	              position,
+	              mydict['nbins'],
+	              nthreads=nthreads,
+	              load_state0=load_state0,
+	              savestate=True,
+	              resfolder=resfolder)
 
-	# Saving thermal results
-	scipy.io.savemat('%s/st_nash_tube_stress_res.mat'%resfolder,
-	                 {"times":times,"fluid_temp":Tf,"CG":CG,"m_flow_tb":m_flow_tb,"pressure":pressure,"h_flux":qnet,"Ti":Ti})
+	folder_old = resfolder
+	resfolder = os.path.join(os.getcwd(),'results_%s_d%s'%(case,days[1]))
+
+	shutil.copytree(folder_old, resfolder)
+
+	scipy.io.savemat('%s/inputs.mat'%resfolder,{'times':times[index]})
 
 	# Plotting thermal results
-	fig, axes = plt.subplots(2,2, figsize=(11,8))
-	# HTF temperature at several locations
-	for i in range(9):
-		pos = i*model.nbins + int(model.nbins/2)
-		axes[0,0].plot(times,Tf[:,pos], label='z[%s]'%pos)
-		axes[1,1].plot(times,stress[:,pos])
-		axes[1,0].plot(times,CG[:,pos])
-	axes[0,0].set_ylabel(r'HTF temperature (K)')
-	axes[0,0].set_xlabel(r'Time (d)')
-	# Mass flow rate
-	axes[0,1].plot(times,m_flow_tb)
-	axes[0,1].set_ylabel(r'Mass flow rate (kg/s)')
-	axes[0,1].set_xlabel(r'Time (d)')
-	# Concentrated solar fluxes
-	axes[1,0].set_ylabel(r'CG (W/m$^2$)')
-	axes[1,0].set_xlabel(r'Time (d)')
-	# Equivalent stress
-	axes[1,1].set_ylabel(r'$\sigma_\mathrm{eq}$ (MPa)')
-	axes[1,1].set_xlabel(r'Time (d)')
-	axes[0,0].legend(bbox_to_anchor=(0,1.02,1,0.2), mode="expand", loc="lower left",borderaxespad=0, ncol=3, frameon=False)
-	# Show
-	plt.savefig('%s/st_nash_tube_stress_fig.png'%resfolder)
+	fig, axes = plt.subplots(1,3, figsize=(18,4))
+
+	axes[0].plot(times[index], mydict['Ti'][index,0,lb:ub])
+	axes[0].set_ylabel(r'$T_\mathrm{crown,i}$ [K]')
+	axes[0].set_xlabel(r'$t$ [h]')
+
+	axes[1].plot(times[index], mydict['qnet'][index,0,lb:ub])
+	axes[1].set_ylabel(r'$q^{\prime\prime}_\mathrm{net}$ [MW/m$^2$]')
+	axes[1].set_xlabel(r'$t$ [h]')
+
+	axes[2].plot(times[index], mydict['pressure'].flatten()[index])
+	axes[2].set_ylabel(r'$P$ [MPa]')
+	axes[2].set_xlabel(r'$t$ [h]')
+
+	plt.tight_layout()
+	plt.savefig('%s/qnet_Ti_pressure_%s.png'%(resfolder,case))
 
 if __name__=='__main__':
 	parser = argparse.ArgumentParser(description='Estimates average damage of a representative tube in a receiver panel')
@@ -530,11 +635,14 @@ if __name__=='__main__':
 	parser.add_argument('--clearSky', type=bool, default=False, help='Run clear sky DNI (requires to have the solartherm results)')
 	parser.add_argument('--load_state0', type=bool, default=False, help='Load state from a previous simulation')
 	parser.add_argument('--savestate', type=bool, default=False, help='Save the last state of the last simulated day')
-	parser.add_argument('--nrepeats', type=int, default=1, help='Number of repeats to be simulated. Default=1')
+	parser.add_argument('--preprocess', type=bool, default=False, help='Just preprocess SRLIFE input')
 	args = parser.parse_args()
 
 	tinit = time.time()
-	run_gemasolar(args.panel,args.position,args.days,args.nthreads,args.clearSky,args.load_state0,args.savestate,args.nrepeats)
+	if args.preprocess:
+		pre_processing_gemasolar(clearSky)
+	else:
+		run_gemasolar(args.clearSky, args.days, args.panel, args.position, args.nthreads, args.load_state0, args.savestate)
 	seconds = time.time() - tinit
 	m, s = divmod(seconds, 60)
 	h, m = divmod(m, 60)
