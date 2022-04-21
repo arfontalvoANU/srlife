@@ -605,27 +605,67 @@ def run_gemasolar(clearSky,days,panel,position,nthreads,load_state0,savestate):
 	folder_old = resfolder
 	resfolder = os.path.join(os.getcwd(),'results_%s_d%s'%(case,days[1]))
 
-	shutil.copytree(folder_old, resfolder)
+	if not os.path.isdir(resfolder):
+		shutil.copytree(folder_old, resfolder)
 
 	scipy.io.savemat('%s/inputs.mat'%resfolder,{'times':times[index]})
 
 	# Plotting thermal results
-	fig, axes = plt.subplots(1,3, figsize=(18,4))
+	fig, axes = plt.subplots(2,3, figsize=(18,8))
 
-	axes[0].plot(times[index], mydict['Ti'][index,0,lb:ub])
-	axes[0].set_ylabel(r'$T_\mathrm{crown,i}$ [K]')
-	axes[0].set_xlabel(r'$t$ [h]')
+	axes[0,0].plot(times[index], mydict['Ti'][index,0,lb:ub])
+	axes[0,0].set_ylabel(r'$T_\mathrm{crown,i}$ [K]')
+	axes[0,0].set_xlabel(r'$t$ [h]')
 
-	axes[1].plot(times[index], mydict['qnet'][index,0,lb:ub])
-	axes[1].set_ylabel(r'$q^{\prime\prime}_\mathrm{net}$ [MW/m$^2$]')
-	axes[1].set_xlabel(r'$t$ [h]')
+	axes[0,1].plot(times[index], mydict['qnet'][index,0,lb:ub])
+	axes[0,1].set_ylabel(r'$q^{\prime\prime}_\mathrm{net}$ [MW/m$^2$]')
+	axes[0,1].set_xlabel(r'$t$ [h]')
 
-	axes[2].plot(times[index], mydict['pressure'].flatten()[index])
-	axes[2].set_ylabel(r'$P$ [MPa]')
-	axes[2].set_xlabel(r'$t$ [h]')
+	axes[0,2].plot(times[index], mydict['pressure'].flatten()[index])
+	axes[0,2].set_ylabel(r'$P$ [MPa]')
+	axes[0,2].set_xlabel(r'$t$ [h]')
+
+	quadrature_results = scipy.io.loadmat('%s/quadrature_results.mat'%(resfolder))
+
+	vm = np.sqrt((
+	              (quadrature_results['stress_xx'] - quadrature_results['stress_yy'])**2.0 + 
+	              (quadrature_results['stress_yy'] - quadrature_results['stress_zz'])**2.0 + 
+	              (quadrature_results['stress_zz'] - quadrature_results['stress_xx'])**2.0 + 
+	              6.0 * (quadrature_results['stress_xy']**2.0 + 
+	              quadrature_results['stress_yz']**2.0 + 
+	              quadrature_results['stress_xz']**2.0))/2.0)
+
+	em = np.sqrt((
+	              (quadrature_results['mechanical_strain_xx'] - quadrature_results['mechanical_strain_yy'])**2.0 + 
+	              (quadrature_results['mechanical_strain_yy'] - quadrature_results['mechanical_strain_zz'])**2.0 + 
+	              (quadrature_results['mechanical_strain_zz'] - quadrature_results['mechanical_strain_xx'])**2.0 + 
+	              6.0 * (quadrature_results['mechanical_strain_xy']**2.0 + 
+	              quadrature_results['mechanical_strain_yz']**2.0 + 
+	              quadrature_results['mechanical_strain_xz']**2.0))/2.0)
+
+	axes[1,0].plot(times[index],vm[:,0,0],label='Inner')
+	axes[1,0].plot(times[index],vm[:,727,0],label='Outer')
+	axes[1,0].set_xlabel(r'$t$ [h]')
+	axes[1,0].set_ylabel(r'$\sigma_\mathrm{crown,eq}$ [MPa]')
+	axes[1,0].set_ylim([-0.05,350])
+	axes[1,0].legend(loc="upper left", borderaxespad=0, ncol=1, frameon=False)
+
+	axes[1,1].plot(times[index],quadrature_results['temperature'][:,0,0]-273.15,label='Inner')
+	axes[1,1].plot(times[index],quadrature_results['temperature'][:,727,0]-273.15,label='Outer')
+	axes[1,1].set_xlabel(r'$t$ [h]')
+	axes[1,1].set_ylabel(r'$T_\mathrm{crown}$ [\textdegree C]')
+	axes[1,1].set_ylim([-0.05,700])
+	axes[1,1].legend(loc="upper left", borderaxespad=0, ncol=1, frameon=False)
+
+	axes[1,2].plot(times[index],em[:,0,0],label='Inner')
+	axes[1,2].plot(times[index],em[:,727,0],label='Outer')
+	axes[1,2].set_xlabel(r'$t$ [h]')
+	axes[1,2].set_ylabel(r'$\epsilon_\mathrm{crown,eq}$ [mm/mm]')
+	axes[1,2].set_ylim([-0.0001,0.0035])
+	axes[1,2].legend(loc="upper left", borderaxespad=0, ncol=1, frameon=False)
 
 	plt.tight_layout()
-	plt.savefig('%s/qnet_Ti_pressure_%s.png'%(resfolder,case))
+	plt.savefig('%s/results_%s_d%s'%(resfolder,case,days[1]))
 
 if __name__=='__main__':
 	parser = argparse.ArgumentParser(description='Estimates average damage of a representative tube in a receiver panel')
