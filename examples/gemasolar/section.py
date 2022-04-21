@@ -6,6 +6,7 @@ mpl.rcParams['text.usetex'] = True
 mpl.rcParams['font.size'] = 14
 mpl.rcParams['font.family'] = 'Times'
 import os, sys, math, scipy.io, argparse
+from scipy.interpolate import interp1d, RegularGridInterpolator
 import time, ctypes
 from numpy.ctypeslib import ndpointer
 from functools import partial
@@ -640,7 +641,7 @@ if __name__=='__main__':
 
 	tinit = time.time()
 	if args.preprocess:
-		pre_processing_gemasolar(clearSky)
+		pre_processing_gemasolar(args.clearSky)
 	else:
 		run_gemasolar(args.clearSky, args.days, args.panel, args.position, args.nthreads, args.load_state0, args.savestate)
 	seconds = time.time() - tinit
