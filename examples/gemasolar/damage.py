@@ -1,7 +1,7 @@
 import numpy as np
 import os, sys
 import scipy.optimize as opt
-import scipy.io as sio
+import scipy.io
 import time
 import argparse
 
@@ -9,17 +9,18 @@ sys.path.append('../..')
 
 from srlife import receiver, library
 
-def id_cycles(tube, receiver):
+def id_cycles(times, period, days):
 	"""
 		Helper to separate out individual cycles by index
 
 		Parameters:
-			tube        single tube with results
-			receiver    receiver, for metadata
+			times       Tube times
+			period      Period of a single cycle
+			days        Number of days in simulation
 	"""
-	tm = np.mod(tube.times, receiver.period)
+	tm = np.mod(times, period)
 	inds = list(np.where(tm == 0)[0])
-	if len(inds) != (receiver.days + 1):
+	if len(inds) != (days + 1):
 		raise ValueError("Tube times not compatible with the receiver number of days and cycle period!")
 	return inds
 
@@ -102,52 +103,64 @@ def make_extrapolate(D, extrapolate="lump",order=1):
 	else:
 		raise ValueError("Unknown damage extrapolation approach %s!" % extrapolate)
 
-def calculate_damage(fileName,update,material,paneln,tuben):
+def calculate_damage(fileName,clearSky,days,material,source):
 
-	model = receiver.Receiver.load('%s.hdf5'%fileName)
+	if clearSky:
+		mydict = scipy.io.loadmat('%s/input_clear_sky.mat'%source)
+		case = 'clear'
+	else:
+		mydict = scipy.io.loadmat('%s/input_tmy_data.mat'%source)
+		case = 'tmy'
+
+	times = mydict['times'].flatten()
+	index = np.where((times>=days[0]*24) & (times<=days[1]*24))[0]
+
+	quadrature_results = scipy.io.loadmat(fileName)
 
 	thermal_mat, deformation_mat, damage_mat = library.load_material(material, 'base', 'base', 'base')
-
-	tube = model.panels[paneln].tubes[tuben]
 
 	### Creep damage ###
 
 	# Von Mises Stress
 	vm = np.sqrt((
-		(tube.quadrature_results['stress_xx'] - tube.quadrature_results['stress_yy'])**2.0 + 
-		(tube.quadrature_results['stress_yy'] - tube.quadrature_results['stress_zz'])**2.0 + 
-		(tube.quadrature_results['stress_zz'] - tube.quadrature_results['stress_xx'])**2.0 + 
-		6.0 * (tube.quadrature_results['stress_xy']**2.0 + 
-		tube.quadrature_results['stress_yz']**2.0 + 
-		tube.quadrature_results['stress_xz']**2.0))/2.0)
+		(quadrature_results['stress_xx'] - quadrature_results['stress_yy'])**2.0 + 
+		(quadrature_results['stress_yy'] - quadrature_results['stress_zz'])**2.0 + 
+		(quadrature_results['stress_zz'] - quadrature_results['stress_xx'])**2.0 + 
+		6.0 * (quadrature_results['stress_xy']**2.0 + 
+		quadrature_results['stress_yz']**2.0 + 
+		quadrature_results['stress_xz']**2.0))/2.0)
 
 	# Time to rupture
-	tR = damage_mat.time_to_rupture("averageRupture", tube.quadrature_results['temperature'], vm)
-	dts = np.diff(tube.times)
+	ntimes = np.shape(quadrature_results['temperature'])[0]
+	period = 24
+	days = days[1] - days[0]
+	times = times[index]
+	tR = damage_mat.time_to_rupture("averageRupture", quadrature_results['temperature'], vm)
+	dts = np.diff(times)
 	time_dmg = dts[:,np.newaxis,np.newaxis]/tR[1:]
 
 	# Break out to cycle damage
-	inds = id_cycles(tube, model)
+	inds = id_cycles(times, period, days)
 
 	# Cycle damage
-	Dc = np.array([np.sum(time_dmg[inds[i]:inds[i+1]], axis = 0) for i in range(model.days)])
+	Dc = np.array([np.sum(time_dmg[inds[i]:inds[i+1]], axis = 0) for i in range(days)])
 
 
 	### Fatigue cycles ###
 
 	# Identify cycle boundaries
-	inds = id_cycles(tube, model)
+	inds = id_cycles(times, period, days)
 
 	# Run through each cycle and ID max strain range and fatigue damage
 	strain_names = ['mechanical_strain_xx', 'mechanical_strain_yy', 'mechanical_strain_zz',
 		'mechanical_strain_yz', 'mechanical_strain_xz', 'mechanical_strain_xy']
 	strain_factors = [1.0,1.0,1.0,2.0, 2.0, 2.0]
 
-	Df =  np.array([cycle_fatigue(np.array([ef*tube.quadrature_results[en][
+	Df =  np.array([cycle_fatigue(np.array([ef*quadrature_results[en][
 	  inds[i]:inds[i+1]] for 
 	  en,ef in zip(strain_names, strain_factors)]), 
-	  tube.quadrature_results['temperature'][inds[i]:inds[i+1]], damage_mat)
-	  for i in range(model.days)])
+	  quadrature_results['temperature'][inds[i]:inds[i+1]], damage_mat)
+	  for i in range(days)])
 
 
 	### Calculating the number of cycles
@@ -155,7 +168,7 @@ def calculate_damage(fileName,update,material,paneln,tuben):
 	# Defining the number of columns as the number of days
 	# This is used to create an array with nrows = nelements x nquad,
 	# and ncols = number of days
-	nc = model.days
+	nc = days
 	max_cycles = []
 
 	for c,f in zip(Dc.reshape(nc,-1).T, Df.reshape(nc,-1).T):
@@ -166,30 +179,24 @@ def calculate_damage(fileName,update,material,paneln,tuben):
 	max_cycles = np.array(max_cycles)
 	print(min(max_cycles))
 
-	if update:
-		savename = 'quadrature_results.mat'
-		mydict = sio.loadmat(savename)
-	else:
-		savename = 'damage_results.mat'
-		mydict = {}
-	mydict['cumDc'] = np.max(np.cumsum(Dc.reshape(nc,-1).T, axis=1), axis=0)
-	mydict['cumDf'] = np.max(np.cumsum(Df.reshape(nc,-1).T, axis=1), axis=0)
-	mydict['Dc'] = np.max(Dc.reshape(nc,-1).T, axis=0)
-	mydict['Df'] = np.max(Df.reshape(nc,-1).T, axis=0)
-	mydict['max_cycles'] = max_cycles
-	sio.savemat(savename, mydict)
+	quadrature_results['cumDc'] = np.cumsum(Dc.reshape(nc,-1).T, axis=1)
+	quadrature_results['cumDf'] = np.cumsum(Df.reshape(nc,-1).T, axis=1)
+	quadrature_results['Dc'] = Dc.reshape(nc,-1).T
+	quadrature_results['Df'] = Df.reshape(nc,-1).T
+	scipy.io.savemat('damage_results.mat', quadrature_results)
+	#scipy.io.savemat(fileName, quadrature_results)
 
 if __name__=='__main__':
 	parser = argparse.ArgumentParser(description='Estimates average damage of a representative tube in a receiver panel')
-	parser.add_argument('--filename', type=str, default='results', help='hdf5 containing the final results')
+	parser.add_argument('--filename', type=str, default='quadrature_results.mat', help='hdf5 containing the final results')
+	parser.add_argument('--clearSky', type=bool, default=False, help='Run clear sky DNI (requires to have the solartherm results)')
+	parser.add_argument('--days', nargs=2, type=int, default=[0,1], help='domain of days to simulate')
 	parser.add_argument('--material', type=str, default='A230', help='Damage material')
-	parser.add_argument('--panel', type=str, default='panel0', help='Panel to calculate damage')
-	parser.add_argument('--tube', type=str, default='tube0', help='Tube to calculate damage')
-	parser.add_argument('--update', type=bool, default=False, help='Update quadrature_results from mechanical solver')
 	args = parser.parse_args()
 	# Running function
 	tinit = time.time()
-	calculate_damage(args.filename, args.update, args.material, args.panel, args.tube)
+	source = os.getcwd()
+	calculate_damage(args.filename,args.clearSky,args.days,args.material,source)
 	# Estimating simulation time
 	seconds = time.time() - tinit
 	m, s = divmod(seconds, 60)
