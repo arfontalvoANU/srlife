@@ -96,20 +96,20 @@ class TubeSpring(Spring):
         i = 0)
     if self.tube.load_state0:
       print('Loading state 0 from local drive')
-      mydict=sio.loadmat('%s/state_0.mat'%self.tube.folder)
-      self.state_n.stress=mydict['stress']
-      self.state_n.strain=mydict['strain']
-      self.state_n.mechanical_strain=mydict['mechanical_strain']
-      self.state_n.thermal_strain=mydict['thermal_strain']
-      self.state_n.history=mydict['history']
-      self.state_n.tangent=mydict['tangent']
-      self.state_n.temperature=mydict['temperature']
-      self.state_n.displacements=mydict['displacements'].reshape(-1)
-      self.state_n.time=mydict['time']
-      self.state_n.energy=mydict['energy']
-      self.state_n.dissipation=mydict['dissipation']
-      self.state_n.force=mydict['force']
-      self.state_n.stiffness=mydict['stiffness']
+      mdict=sio.loadmat('%s/state_0.mat'%self.tube.loadfolder)
+      self.state_n.stress=mdict['stress']
+      self.state_n.strain=mdict['strain']
+      self.state_n.mechanical_strain=mdict['mechanical_strain']
+      self.state_n.thermal_strain=mdict['thermal_strain']
+      self.state_n.history=mdict['history']
+      self.state_n.tangent=mdict['tangent']
+      self.state_n.temperature=mdict['temperature']
+      self.state_n.displacements=mdict['displacements'].reshape(-1)
+      self.state_n.time=mdict['time']
+      self.state_n.energy=mdict['energy']
+      self.state_n.dissipation=mdict['dissipation']
+      self.state_n.force=mdict['force']
+      self.state_n.stiffness=mdict['stiffness']
 
     # Dump this first state to the Tube
     self.solver.dump_state(self.tube, 0, self.state_n)
@@ -131,21 +131,21 @@ class TubeSpring(Spring):
     self.solver.dump_state(self.tube, i, self.state_np1)
     self.state_n = self.state_np1
     if self.tube.savestate and self.state_n.time%24==0:
-      mydict={}
-      mydict['stress'] = self.state_n.stress
-      mydict['strain'] = self.state_n.strain
-      mydict['mechanical_strain'] = self.state_n.mechanical_strain
-      mydict['thermal_strain'] = self.state_n.thermal_strain
-      mydict['history'] = self.state_n.history
-      mydict['tangent'] = self.state_n.tangent
-      mydict['temperature'] = self.state_n.temperature
-      mydict['displacements'] = self.state_n.displacements
-      mydict['time'] = self.state_n.time
-      mydict['energy'] = self.state_n.energy
-      mydict['dissipation'] = self.state_n.dissipation
-      mydict['force'] = self.state_n.force
-      mydict['stiffness'] = self.state_n.stiffness
-      sio.savemat('%s/state_0.mat'%(self.tube.folder),mydict)
+      mdict={}
+      mdict['stress'] = self.state_n.stress
+      mdict['strain'] = self.state_n.strain
+      mdict['mechanical_strain'] = self.state_n.mechanical_strain
+      mdict['thermal_strain'] = self.state_n.thermal_strain
+      mdict['history'] = self.state_n.history
+      mdict['tangent'] = self.state_n.tangent
+      mdict['temperature'] = self.state_n.temperature
+      mdict['displacements'] = self.state_n.displacements
+      mdict['time'] = self.state_n.time
+      mdict['energy'] = self.state_n.energy
+      mdict['dissipation'] = self.state_n.dissipation
+      mdict['force'] = self.state_n.force
+      mdict['stiffness'] = self.state_n.stiffness
+      sio.savemat('%s/state_0.mat'%(self.tube.savefolder),mdict)
 
 class SpringNetwork(nx.MultiGraph):
   """

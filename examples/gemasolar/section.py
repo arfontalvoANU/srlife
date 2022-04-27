@@ -218,14 +218,17 @@ class receiver_cyl:
 		Ti = (To + hf*self.Ri*self.ln/self.kp*Tf)/(1 + hf*self.Ri*self.ln/self.kp)
 		qnet = hf*(Ti - Tf)
 		Qnet = qnet.sum(axis=1)*self.Ri*self.dt*self.dz
-		self.qnet = np.concatenate((qnet[:,1:],qnet[:,::-1]),axis=1)
-		self.Ti = np.concatenate((Ti[:,1:],Ti[:,::-1]),axis=1)
+		net_zero = np.where(Qnet<0)[0]
+		Qnet[net_zero] = 0.0
+		_qnet = np.concatenate((qnet[:,1:],qnet[:,::-1]),axis=1)
+		_qnet[net_zero,:] = 0.0
+		self.qnet = _qnet
 
 		for t in range(Ti.shape[0]):
 			BDp = self.Fourier(Ti[t,:])
 
 		# Fourier coefficients
-		self.s, self.e, self.Tbar_i, self.Tbar_o, self.BP, self.BPP = self.stress(Ti,To)
+		self.s, self.e = self.stress(Ti,To)
 		return Qnet
 
 	def Fourier(self,T):
@@ -236,19 +239,13 @@ class receiver_cyl:
 	def stress(self, Ti, To):
 		stress = np.zeros(Ti.shape[0])
 		strain = np.zeros(Ti.shape[0])
-		Tbar_i = np.zeros(Ti.shape[0])
-		Tbar_o = np.zeros(Ti.shape[0])
-		BP = np.zeros(Ti.shape[0])
-		BPP = np.zeros(Ti.shape[0])
 		for t in range(Ti.shape[0]):
 			BDp = self.Fourier(Ti[t,:])
 			BDpp = self.Fourier(To[t,:])
 			stress[t], strain[t] = self.Thermoelastic(To[t,0], self.Ro, 0., BDp, BDpp)
-			Tbar_i[t] = BDp[0]
-			Tbar_o[t] = BDpp[0]
-			BP[t] = BDp[0]
-			BPP[t] = BDpp[0]
-		return stress,strain,Tbar_i,Tbar_o,BP,BPP
+		stress = np.array(stress)
+		strain = np.array(strain)
+		return stress,strain
 
 	def Thermoelastic(self, T, r, theta, BDp, BDpp):
 		Tbar_i = BDp[0]; BP = BDp[1]; DP = BDp[2];
@@ -303,13 +300,12 @@ def setup_problem(Ro, th, H_rec, Nr, Nt, Nz, times, fluid_temp, h_flux, pressure
 	model = receiver.Receiver(period, days, panel_stiffness)              # Instatiating a receiver model
 
 	# Setup each of the two panels
-	tube_stiffness = "disconnect"                                         # Tube stiffness (N/mm), could be also "rigid" or "disconnect"
+	tube_stiffness = "rigid"
 	panel_0 = receiver.Panel(tube_stiffness)
 
 	# Basic receiver geometry (Updated to Gemasolar)
 	r_outer = Ro*1000                                                     # Panel tube outer radius (mm)
 	thickness = th*1000                                                   # Panel tube thickness (mm)
-	r_inner = r_outer-thickness                                           # Panel tube inner radius (mm)
 	height = H_rec*1000                                                   # Panel tube height (mm)
 
 	# Tube discretization
@@ -320,12 +316,20 @@ def setup_problem(Ro, th, H_rec, Nr, Nt, Nz, times, fluid_temp, h_flux, pressure
 	# Setup Tube 0 in turn and assign it to the correct panel
 	tube_0 = receiver.Tube(r_outer, thickness, height, nr, nt, nz, T0 = T_base)
 	tube_0.set_times(times)
-	tube_0.set_bc(receiver.FixedTempBC(r_inner, height, nt, nz, times, fluid_temp), "inner")
+	tube_0.set_bc(receiver.ConvectiveBC(r_outer-thickness, height, nz, times, fluid_temp), "inner")
 	tube_0.set_bc(receiver.HeatFluxBC(r_outer, height, nt, nz, times, h_flux), "outer")
 	tube_0.set_pressure_bc(receiver.PressureBC(times, pressure))
 
+	# Tube 1
+	tube_1 = receiver.Tube(r_outer, thickness, height, nr, nt, nz, T0 = T_base)
+	tube_1.set_times(times)
+	tube_1.set_bc(receiver.ConvectiveBC(r_outer-thickness, height, nz, times, fluid_temp), "inner")
+	tube_1.set_bc(receiver.HeatFluxBC(r_outer, height, nt, nz, times, h_flux), "outer")
+	tube_1.set_pressure_bc(receiver.PressureBC(times, pressure))
+
 	# Assign to panel 0
 	panel_0.add_tube(tube_0, "tube0")
+	panel_0.add_tube(tube_1, "tube1")
 
 	# Assign the panels to the receiver
 	model.add_panel(panel_0, "panel0")
@@ -337,7 +341,7 @@ def setup_problem(Ro, th, H_rec, Nr, Nt, Nz, times, fluid_temp, h_flux, pressure
 		fileName = '%s/model.hdf5'%folder
 	model.save('model.hdf5')
 
-def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4,load_state0=False,savestate=False,resfolder='.'):
+def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4,load_state0=False,savestate=False,savefolder='.',loadfolder='.'):
 	# Load the receiver we previously saved
 	if folder==None:
 		fileName = 'model.hdf5'
@@ -354,7 +358,8 @@ def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4,load_state0=Fal
 	for panel in model.panels.values():
 		for tube in panel.tubes.values():
 			tube.make_2D(tube.h/nz*zpos)
-			tube.folder=resfolder
+			tube.savefolder=savefolder
+			tube.loadfolder=loadfolder
 			tube.load_state0=load_state0
 			tube.savestate=savestate
 
@@ -362,7 +367,7 @@ def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4,load_state0=Fal
 	params = solverparams.ParameterSet()
 	params['progress_bars'] = progress_bar         # Print a progress bar to the screen as we solve
 	params['nthreads'] = nthreads                  # Solve will run in multithreaded mode, set to number of available cores
-	params['system']['atol'] = 1.0e-4              # Absolute tolerance
+	params['system']['atol'] = 1.0e-4              # During the standby very little happens, lower the atol to accept this result
 
 	# Choose the solvers, i.e. how we are going to solve the thermal,
 	# single tube, structural system, and damage calculation problems.
@@ -381,126 +386,117 @@ def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4,load_state0=Fal
 		structural_solver, deformation_mat, damage_mat,
 		system_solver, damage_model, pset = params)
 
-	#solver.add_heuristic(managers.CycleResetHeuristic())
-
 	# Actually solve for life
 	solver.solve_heat_transfer()
 	solver.solve_structural()
 	result = 1
 	return result
 
-def pre_processing_gemasolar(days,clearSky,step=1800.0):
+def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate):
+
+	print('Verification of inputs:')
+	print('panel %s, pos %s, days %s-%s, nthreads=%s, clearSky=%s, load_state0=%s, savestate=%s'%(panel,position,days[0],days[1],nthreads,clearSky,load_state0,savestate))
 	model = receiver_cyl(Ri = 20.0/2000, Ro = 22.4/2000)   # Instantiating model with the gemasolar geometry
 	nr = 9                                                 # Number of radial nodes
 
 	# Importing data from Modelica
-	fileName = '%s/solartherm/SolarTherm/Resources/Include/stress/GemasolarSystemOperation_res.mat'%os.path.expanduser('~')
+	if clearSky:
+		fileName = 'GemasolarSystemOperationCS_res.mat'
+		case = 'clear'
+	else:
+		fileName = 'GemasolarSystemOperation_res.mat'
+		case = 'tmy'
 	model.import_mat(fileName)
 
 	# Importing times
 	times = model.data[:,0]
-	ele = model.data[:,model._vars['heliostatField.ele'][2]]
+	# Importing flux
+	CG = model.data[:,model._vars['heliostatField.CG[1]'][2]:model._vars['heliostatField.CG[450]'][2]+1]
+	m_flow_tb = model.data[:,model._vars['heliostatField.m_flow_tb'][2]]
 	Tamb = model.data[:,model._vars['receiver.Tamb'][2]]
 	h_ext = model.data[:,model._vars['receiver.h_conv'][2]]
 	ele = model.data[:,model._vars['heliostatField.ele'][2]]
-	ele_min = np.radians(8)
-	if not clearSky:
-		CG = model.data[:,model._vars['heliostatField.CG[1]'][2]:model._vars['heliostatField.CG[450]'][2]+1]
-		m_flow_tb = model.data[:,model._vars['heliostatField.m_flow_tb'][2]]
-	else:
-		CG = model.data[:,model._vars['heliostatField.CGCS[1]'][2]:model._vars['heliostatField.CGCS[450]'][2]+1]
-		m_flow_tb = model.data[:,model._vars['heliostatField.m_flow_tb_cs'][2]]
+	on_forecast = model.data[:,model._vars['heliostatField.on_hf_forecast'][2]]
 
 	# Filtering times
 	index = []
-	pre_times = []
+	_times = []
 	time_lb = days[0]*86400
 	time_ub = days[1]*86400
-	for i,v in enumerate(times):
-		if v%step==0 and v not in pre_times and time_lb<=v and v<=time_ub:
-			index.append(i)
-			pre_times.append(v)
+	for i in range(len(times)):
+		if ele[i]==0:
+			if times[i]%7200.==0 and times[i] not in _times and time_lb<=times[i] and times[i]<=time_ub:
+				index.append(i)
+				_times.append(times[i])
+		else:
+			if times[i]%1800.==0 and times[i] not in _times and time_lb<=times[i] and times[i]<=time_ub:
+				index.append(i)
+				_times.append(times[i])
 
 	# Getting inputs based on filtered times
 	times = times[index]/3600.
+	times = times.flatten()
 	CG = CG[index,:]
 	m_flow_tb = m_flow_tb[index]
 	Tamb = Tamb[index]
 	h_ext = h_ext[index]
 	ele = ele[index]
+	on_forecast = on_forecast[index]
+
+	tm = np.mod(times,24)
+	inds = np.where(tm==0)[0]
+
+	for i in range(len(inds)-1):
+		if not np.any(on_forecast[inds[i]:inds[i+1]]==1):
+			m_flow_tb[inds[i]:inds[i+1]]=0
+			CG[inds[i]:inds[i+1],:]=0
 
 	# Instantiating variables
+	field_off = [0]; start = []; stop = []
+	for i in range(1,times.shape[0]-1):
+		if m_flow_tb[i]==0 and m_flow_tb[i+1]==0 and m_flow_tb[i-1]==0:
+			field_off.append(i)
+		if m_flow_tb[i]==0 and m_flow_tb[i+1]>0 and m_flow_tb[i-1]==0:
+			start.append(i)
+		if m_flow_tb[i]==0 and m_flow_tb[i+1]==0 and m_flow_tb[i-1]>0:
+			stop.append(i)
+	field_off.append(times.shape[0]-1)
+	stress = np.zeros((times.shape[0],model.nz))
 	Tf = model.T_in*np.ones((times.shape[0],model.nz+1))
-	zero_flow = np.where((m_flow_tb<1e-4) & (ele>=ele_min))[0]
-	field_off = np.where(ele<ele_min)[0]
-	m_flow_tb[field_off] = 1e-4
-	m_flow_tb[zero_flow] = 1e-4#1.80  #@T=563.15K & V=3m/s
 	for i in field_off:
 		Tf[i,:] = Tamb[i]*np.ones((model.nz+1,))
+	for i in start:
+		Tf[i,:] = 533.15*np.ones((model.nz+1,))
+	for i in stop:
+		Tf[i,:] = 533.15*np.ones((model.nz+1,))
 	qnet = np.zeros((times.shape[0],2*model.nt-1,model.nz))
-	Ti = np.zeros((times.shape[0],2*model.nt-1,model.nz))
-
-	# Getting internal pressure
-	p_max = 1.5 # MPa
-	pressure = np.where(m_flow_tb>1e-4, p_max, m_flow_tb)
-	pressure = pressure.flatten()
 
 	# Running thermal model
 	for k in tqdm(range(model.nz)):
 		Qnet = model.Temperature(m_flow_tb, Tf[:,k], Tamb, CG[:,k], h_ext)
 		C = model.specificHeatCapacityCp(Tf[:,k])*m_flow_tb
 		Tf[:,k+1] = Tf[:,k] + np.divide(Qnet, C, out=np.zeros_like(C), where=C!=0)
+		stress[:,k] = model.s/1e6
 		qnet[:,:,k] = model.qnet/1e6
-		Ti[:,:,k] = model.Ti
 
-	mydict={}
-	mydict['Ro'] = model.Ro
-	mydict['thickness'] = model.thickness
-	mydict['H_rec'] = model.H_rec
-	mydict['nr'] = nr
-	mydict['nt'] = 2*model.nt-1
-	mydict['nbins'] = model.nbins
-	mydict['times'] = times
-	mydict['Ti'] = Ti
-	mydict['qnet'] = qnet
-	mydict['pressure'] = pressure
-	mydict['Tbase'] = Tamb[0]
-	mydict['CG'] = CG
-	mydict['m_flow_tb'] = m_flow_tb
-	mydict['Tamb'] = Tamb
-	mydict['h_ext'] = h_ext
-	mydict['Tf'] = Tf
+	# Getting internal pressure
+	pressure = np.where(m_flow_tb>0, 0.1, m_flow_tb)
+	pressure = pressure.flatten()
+	lb = model.nbins*(panel-1)
+	ub = lb + model.nbins
 
-	return mydict
+	ndays = (days[1]-days[0])
 
-def run_gemasolar(clearSky,days,panel,position,nthreads,load_state0,savestate,step):
+	loadfolder = os.path.join(os.getcwd(),'results_%s_d%s'%(case,days[0]))
+	savefolder = os.path.join(os.getcwd(),'results_%s_d%s'%(case,days[1]))
+	if not os.path.isdir(savefolder):
+		os.mkdir(savefolder)
 
-	mydict = pre_processing_gemasolar(days,clearSky,step)
-
-	if clearSky:
-		case = 'clear'
-	else:
-		case = 'tmy'
-
-	resfolder = os.path.join(os.getcwd(),'results')
-	if not os.path.isdir(resfolder):
-		os.mkdir(resfolder)
-
-	Ro = float(mydict['Ro'])
-	thickness = float(mydict['thickness'])
-	H_rec = float(mydict['H_rec'])
-	nr = int(mydict['nr'])
-	nt = int(mydict['nt'])
-	nbins = int(mydict['nbins'])
-
-	times = mydict['times'].flatten()
-
-	# Selecting panel boundaries (inlet and outlet)
-	lb = nbins*(panel-1)
-	ub = lb + nbins
-	ndays = days[1] - days[0]
-	tm = np.mod(times, 24)
-	inds = list(np.where(tm == 0)[0])
+	Ro = model.Ro
+	thickness = model.thickness
+	H_rec = model.H_rec
+	nt = 2*model.nt-1
+	nbins = model.nbins
 
 	# Creating the hdf5 model
 	setup_problem(Ro,
@@ -510,47 +506,42 @@ def run_gemasolar(clearSky,days,panel,position,nthreads,load_state0,savestate,st
 	              nt,
 	              nbins,
 	              times,
-	              mydict['Ti'][:,:,lb:ub],
-	              mydict['qnet'][:,:,lb:ub],
-	              mydict['pressure'].flatten(),
-	              T_base = mydict['Tbase'],
+	              Tf[:,lb:ub],
+	              qnet[:,:,lb:ub],
+	              pressure,
+	              T_base = Tamb[0],
 	              days=ndays)
 
+	# Running srlife
 	if days[0]>0:
 		load_state0 = True
-	# Running srlife
 	life = run_problem(
 	              position,
-	              mydict['nbins'],
+	              nbins,
 	              nthreads=nthreads,
 	              load_state0=load_state0,
 	              savestate=True,
-	              resfolder=resfolder)
+	              loadfolder=loadfolder,
+	              savefolder=savefolder)
 
-	folder_old = resfolder
-	resfolder = os.path.join(os.getcwd(),'results_%s_d%s'%(case,days[1]))
-
-	if not os.path.isdir(resfolder):
-		shutil.copytree(folder_old, resfolder)
-
-	scipy.io.savemat('%s/inputs.mat'%resfolder,{'times':times[index]})
+	scipy.io.savemat('%s/inputs.mat'%savefolder,{'times':times})
 
 	# Plotting thermal results
 	fig, axes = plt.subplots(2,3, figsize=(18,8))
 
-	axes[0,0].plot(times[index], mydict['Ti'][index,0,lb:ub])
-	axes[0,0].set_ylabel(r'$T_\mathrm{crown,i}$ [K]')
+	axes[0,0].plot(times, Tf[:,lb:ub])
+	axes[0,0].set_ylabel(r'$T_\mathrm{f}$ [K]')
 	axes[0,0].set_xlabel(r'$t$ [h]')
 
-	axes[0,1].plot(times[index], mydict['qnet'][index,0,lb:ub])
+	axes[0,1].plot(times, qnet[:,0,lb:ub])
 	axes[0,1].set_ylabel(r'$q^{\prime\prime}_\mathrm{net}$ [MW/m$^2$]')
 	axes[0,1].set_xlabel(r'$t$ [h]')
 
-	axes[0,2].plot(times[index], mydict['pressure'].flatten()[index])
+	axes[0,2].plot(times, pressure)
 	axes[0,2].set_ylabel(r'$P$ [MPa]')
 	axes[0,2].set_xlabel(r'$t$ [h]')
 
-	quadrature_results = scipy.io.loadmat('%s/quadrature_results.mat'%(resfolder))
+	quadrature_results = scipy.io.loadmat('%s/quadrature_results.mat'%(savefolder))
 
 	vm = np.sqrt((
 	              (quadrature_results['stress_xx'] - quadrature_results['stress_yy'])**2.0 + 
@@ -568,45 +559,42 @@ def run_gemasolar(clearSky,days,panel,position,nthreads,load_state0,savestate,st
 	              quadrature_results['mechanical_strain_yz']**2.0 + 
 	              quadrature_results['mechanical_strain_xz']**2.0))/2.0)
 
-	axes[1,0].plot(times[index],vm[:,0,0],label='Inner')
-	axes[1,0].plot(times[index],vm[:,727,0],label='Outer')
+	axes[1,0].plot(times,vm[:,0,0],label='Inner')
+	axes[1,0].plot(times,vm[:,727,0],label='Outer')
 	axes[1,0].set_xlabel(r'$t$ [h]')
 	axes[1,0].set_ylabel(r'$\sigma_\mathrm{crown,eq}$ [MPa]')
-	axes[1,0].set_ylim([-0.05,350])
 	axes[1,0].legend(loc="best", borderaxespad=0, ncol=1, frameon=False)
 
-	axes[1,1].plot(times[index],quadrature_results['temperature'][:,0,0]-273.15,label='Inner')
-	axes[1,1].plot(times[index],quadrature_results['temperature'][:,727,0]-273.15,label='Outer')
+	axes[1,1].plot(times,quadrature_results['temperature'][:,0,0]-273.15,label='Inner')
+	axes[1,1].plot(times,quadrature_results['temperature'][:,727,0]-273.15,label='Outer')
 	axes[1,1].set_xlabel(r'$t$ [h]')
 	axes[1,1].set_ylabel(r'$T_\mathrm{crown}$ [\textdegree C]')
 	axes[1,1].set_ylim([-0.05,700])
 	axes[1,1].legend(loc="best", borderaxespad=0, ncol=1, frameon=False)
 
-	axes[1,2].plot(times[index],em[:,0,0],label='Inner')
-	axes[1,2].plot(times[index],em[:,727,0],label='Outer')
+	axes[1,2].plot(times,em[:,0,0],label='Inner')
+	axes[1,2].plot(times,em[:,727,0],label='Outer')
 	axes[1,2].set_xlabel(r'$t$ [h]')
 	axes[1,2].set_ylabel(r'$\epsilon_\mathrm{crown,eq}$ [mm/mm]')
 	axes[1,2].legend(loc="best", borderaxespad=0, ncol=1, frameon=False)
 
 	plt.tight_layout()
-	plt.savefig('%s/results_%s_d%s'%(resfolder,case,days[1]))
+	plt.savefig('%s/results_%s_d%s'%(savefolder,case,days[1]))
 
 if __name__=='__main__':
 	parser = argparse.ArgumentParser(description='Estimates average damage of a representative tube in a receiver panel')
-	parser.add_argument('--panel', type=int, default=1, help='Panel to be simulated. Default=1')
-	parser.add_argument('--position', type=float, default=1, help='Panel position to be simulated. Default=1')
+	parser.add_argument('--panel', type=int, default=4, help='Panel to be simulated. Default=1')
+	parser.add_argument('--position', type=float, default=30, help='Panel position to be simulated. Default=1')
 	parser.add_argument('--days', nargs=2, type=int, default=[0,1], help='domain of days to simulate')
 	parser.add_argument('--nthreads', type=int, default=4, help='Number of processors. Default=4')
 	parser.add_argument('--clearSky', type=bool, default=False, help='Run clear sky DNI (requires to have the solartherm results)')
 	parser.add_argument('--load_state0', type=bool, default=False, help='Load state from a previous simulation')
-	parser.add_argument('--savestate', type=bool, default=False, help='Save the last state of the last simulated day')
-	parser.add_argument('--step', type=float, default=1800, help='Simulation time step')
+	parser.add_argument('--savestate', type=bool, default=True, help='Save the last state of the last simulated day')
 	args = parser.parse_args()
 
 	tinit = time.time()
-	run_gemasolar(args.clearSky, args.days, args.panel, args.position, args.nthreads, args.load_state0, args.savestate, args.step)
+	run_gemasolar(args.panel,args.position,args.days,args.nthreads,args.clearSky,args.load_state0,args.savestate)
 	seconds = time.time() - tinit
 	m, s = divmod(seconds, 60)
 	h, m = divmod(m, 60)
 	print('Simulation time: {:d}:{:02d}:{:02d}'.format(int(h), int(m), int(s)))
-
