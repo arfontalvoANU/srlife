@@ -367,7 +367,22 @@ def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4,load_state0=Fal
 	params = solverparams.ParameterSet()
 	params['progress_bars'] = progress_bar         # Print a progress bar to the screen as we solve
 	params['nthreads'] = nthreads                  # Solve will run in multithreaded mode, set to number of available cores
-	params['system']['atol'] = 1.0e-4              # During the standby very little happens, lower the atol to accept this result
+
+	params["thermal"]["steady"] = False            # Ignore thermal mass and use conduction only
+	params["thermal"]["rtol"] = 1.0e-6             # Iteration relative tolerance
+	params["thermal"]["atol"] = 1.0e-4             # Iteration absolute tolerance
+	params["thermal"]["miter"] = 20                # Maximum iterations
+	params["thermal"]["substep"] = 1               # Divide user-provided time increments into smaller values
+
+	params["structural"]["rtol"] = 1.0e-6          # Relative tolerance for NR iterations
+	params["structural"]["atol"] = 1.0e-8          # Absolute tolerance for NR iterations
+	params["structural"]["miter"] = 50             # Maximum newton-raphson iterations
+	params["structural"]["verbose"] = False        # Verbose solve
+
+	params["system"]["rtol"] = 1.0e-6              # Relative tolerance
+	params["system"]["atol"] = 1.0e-8              # Absolute tolerance
+	params["system"]["miter"] = 20                 # Number of permissible nonlinear iterations
+	params["system"]["verbose"] = False            # Print a lot of debug info
 
 	# Choose the solvers, i.e. how we are going to solve the thermal,
 	# single tube, structural system, and damage calculation problems.
@@ -464,7 +479,7 @@ def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate):
 	stress = np.zeros((times.shape[0],model.nz))
 	Tf = model.T_in*np.ones((times.shape[0],model.nz+1))
 	for i in field_off:
-		Tf[i,:] = Tamb[i]*np.ones((model.nz+1,))
+		Tf[i,:] = 293.15*np.ones((model.nz+1,))
 	for i in start:
 		Tf[i,:] = 533.15*np.ones((model.nz+1,))
 	for i in stop:
@@ -509,7 +524,7 @@ def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate):
 	              Tf[:,lb:ub],
 	              qnet[:,:,lb:ub],
 	              pressure,
-	              T_base = Tamb[0],
+	              T_base = 293.15,
 	              days=ndays)
 
 	# Running srlife
@@ -524,7 +539,11 @@ def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate):
 	              loadfolder=loadfolder,
 	              savefolder=savefolder)
 
-	scipy.io.savemat('%s/inputs.mat'%savefolder,{'times':times})
+	scipy.io.savemat('%s/inputs.mat'%savefolder,{
+	              'times':times,
+	              'qnet':qnet,
+	              'Tf':Tf,
+	              'pressure':pressure})
 
 	# Plotting thermal results
 	fig, axes = plt.subplots(2,3, figsize=(18,8))
