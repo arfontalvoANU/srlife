@@ -351,7 +351,11 @@ def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4,load_state0=Fal
 
 	# Choose the material models
 	fluid_mat = library.load_fluid("nitratesalt", "base")
-	thermal_mat, deformation_mat, damage_mat = library.load_material("A230", "base", "base", "base")
+	mat =     "A230"
+	thermat = "base"                               # base
+	defomat = "const_elastic_creep"                # base | elastic_creep | elastic_model | const_elastic_creep
+	damat =   "base"                               # base
+	thermal_mat, deformation_mat, damage_mat = library.load_material(mat, thermat, defomat, damat)
 
 	# Cut down on run time for now by making the tube analyses 1D
 	# This is not recommended for actual design evaluation
