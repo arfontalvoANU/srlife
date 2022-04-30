@@ -353,7 +353,7 @@ def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4,load_state0=Fal
 	fluid_mat = library.load_fluid("nitratesalt", "base")
 	mat =     "A230"
 	thermat = "base"                               # base
-	defomat = "const_elastic_creep"                # base | elastic_creep | elastic_model | const_elastic_creep
+	defomat = "const_base"                         # base | elastic_creep | elastic_model | const_elastic_creep | const_base
 	damat =   "base"                               # base
 	thermal_mat, deformation_mat, damage_mat = library.load_material(mat, thermat, defomat, damat)
 
