@@ -341,7 +341,7 @@ def setup_problem(Ro, th, H_rec, Nr, Nt, Nz, times, fluid_temp, h_flux, pressure
 		fileName = '%s/model.hdf5'%folder
 	model.save('model.hdf5')
 
-def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4,load_state0=False,savestate=False,savefolder='.',loadfolder='.'):
+def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4,load_state0=False,savestate=False,savefolder='.',loadfolder='.',debug=False):
 	# Load the receiver we previously saved
 	if folder==None:
 		fileName = 'model.hdf5'
@@ -386,7 +386,7 @@ def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4,load_state0=Fal
 	params["system"]["rtol"] = 1.0e-6              # Relative tolerance
 	params["system"]["atol"] = 1.0e-8              # Absolute tolerance
 	params["system"]["miter"] = 20                 # Number of permissible nonlinear iterations
-	params["system"]["verbose"] = False            # Print a lot of debug info
+	params["system"]["verbose"] = debug            # Print a lot of debug info
 
 	# Choose the solvers, i.e. how we are going to solve the thermal,
 	# single tube, structural system, and damage calculation problems.
@@ -411,7 +411,7 @@ def run_problem(zpos,nz,progress_bar=True,folder=None,nthreads=4,load_state0=Fal
 	result = 1
 	return result
 
-def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate):
+def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate,step,debug):
 
 	print('Verification of inputs:')
 	print('panel %s, pos %s, days %s-%s, nthreads=%s, clearSky=%s, load_state0=%s, savestate=%s'%(panel,position,days[0],days[1],nthreads,clearSky,load_state0,savestate))
@@ -448,7 +448,7 @@ def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate):
 				index.append(i)
 				_times.append(times[i])
 		else:
-			if times[i]%1800.==0 and times[i] not in _times and time_lb<=times[i] and times[i]<=time_ub:
+			if times[i]%step==0 and times[i] not in _times and time_lb<=times[i] and times[i]<=time_ub:
 				index.append(i)
 				_times.append(times[i])
 
@@ -541,7 +541,8 @@ def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate):
 	              load_state0=load_state0,
 	              savestate=True,
 	              loadfolder=loadfolder,
-	              savefolder=savefolder)
+	              savefolder=savefolder,
+	              debug=debug)
 
 	scipy.io.savemat('%s/inputs.mat'%savefolder,{
 	              'times':times,
@@ -613,10 +614,12 @@ if __name__=='__main__':
 	parser.add_argument('--clearSky', type=bool, default=False, help='Run clear sky DNI (requires to have the solartherm results)')
 	parser.add_argument('--load_state0', type=bool, default=False, help='Load state from a previous simulation')
 	parser.add_argument('--savestate', type=bool, default=True, help='Save the last state of the last simulated day')
+	parser.add_argument('--step', type=float, default=1800, help='Simulation step. Default=1800')
+	parser.add_argument('--debug', type=bool, default=False, help='Debug option. Default=False')
 	args = parser.parse_args()
 
 	tinit = time.time()
-	run_gemasolar(args.panel,args.position,args.days,args.nthreads,args.clearSky,args.load_state0,args.savestate)
+	run_gemasolar(args.panel,args.position,args.days,args.nthreads,args.clearSky,args.load_state0,args.savestate,args.step,args.debug)
 	seconds = time.time() - tinit
 	m, s = divmod(seconds, 60)
 	h, m = divmod(m, 60)
