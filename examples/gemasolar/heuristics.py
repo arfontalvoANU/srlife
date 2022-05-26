@@ -390,22 +390,34 @@ class receiver_cyl:
 
 		return Q_Eq,e
 
-def run_heuristics(days,step):
+def run_heuristics(days,step,gemasolar_600=False):
 
 	model = receiver_cyl(Ri = 20.0/2000, Ro = 22.4/2000)                   # Instantiating model with the gemasolar geometry
 
 	# Importing data from Modelica
-	model.import_mat('GemasolarSystemOperation_res.mat')
+	if gemasolar_600:
+		model.import_mat('nitrate_salt_600degC.mat')
+		# Importing times
+		times = model.data[:,0]
+		# Importing flux
+		CG = model.data[:,model._vars['CG[1]'][2]:model._vars['CG[450]'][2]+1]
+		m_flow_tb = model.data[:,model._vars['m_flow_tb'][2]]
+		Tamb = model.data[:,model._vars['data.Tdry'][2]]
+		h_ext = model.data[:,model._vars['h_conv'][2]]
+		ele = model.data[:,model._vars['ele'][2]]
+		on_forecast = model.data[:,model._vars['on_hf'][2]]
 
-	# Importing times
-	times = model.data[:,0]
-	# Importing flux
-	CG = model.data[:,model._vars['heliostatField.CG[1]'][2]:model._vars['heliostatField.CG[450]'][2]+1]
-	m_flow_tb = model.data[:,model._vars['heliostatField.m_flow_tb'][2]]
-	Tamb = model.data[:,model._vars['receiver.Tamb'][2]]
-	h_ext = model.data[:,model._vars['receiver.h_conv'][2]]
-	ele = model.data[:,model._vars['heliostatField.ele'][2]]
-	on_forecast = model.data[:,model._vars['heliostatField.on_hf_forecast'][2]]
+	else:
+		model.import_mat('GemasolarSystemOperation_res.mat')
+		# Importing times
+		times = model.data[:,0]
+		# Importing flux
+		CG = model.data[:,model._vars['heliostatField.CG[1]'][2]:model._vars['heliostatField.CG[450]'][2]+1]
+		m_flow_tb = model.data[:,model._vars['heliostatField.m_flow_tb'][2]]
+		Tamb = model.data[:,model._vars['receiver.Tamb'][2]]
+		h_ext = model.data[:,model._vars['receiver.h_conv'][2]]
+		ele = model.data[:,model._vars['heliostatField.ele'][2]]
+		on_forecast = model.data[:,model._vars['heliostatField.on_hf_forecast'][2]]
 
 	# Filtering times
 	index = []

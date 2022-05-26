@@ -605,6 +605,196 @@ def run_gemasolar(panel,position,days,nthreads,clearSky,load_state0,savestate,st
 	plt.tight_layout()
 	plt.savefig('%s/results_%s_d%s'%(savefolder,case,days[1]))
 
+def run_gemasolar_600(panel,position,days,nthreads,clearSky,load_state0,savestate,step,debug):
+
+	print('Verification of inputs:')
+	print('panel %s, pos %s, days %s-%s, nthreads=%s, clearSky=%s, load_state0=%s, savestate=%s'%(panel,position,days[0],days[1],nthreads,clearSky,load_state0,savestate))
+	model = receiver_cyl(Ri = 20.0/2000, Ro = 22.4/2000)   # Instantiating model with the gemasolar geometry
+	nr = 9                                                 # Number of radial nodes
+
+	# Importing data from Modelica
+	fileName = 'nitrate_salt_600degC.mat'
+	case = 'tmy'
+	model.import_mat(fileName)
+
+	# Importing times
+	times = model.data[:,0]
+	# Importing flux
+	CG = model.data[:,model._vars['CG[1]'][2]:model._vars['CG[450]'][2]+1]
+	m_flow_tb = model.data[:,model._vars['m_flow_tb'][2]]
+	Tamb = model.data[:,model._vars['data.Tdry'][2]]
+	h_ext = model.data[:,model._vars['h_conv'][2]]
+	ele = model.data[:,model._vars['ele'][2]]
+	on_forecast = model.data[:,model._vars['on_hf'][2]]
+
+	# Filtering times
+	index = []
+	_times = []
+	time_lb = days[0]*86400
+	time_ub = days[1]*86400
+	for i in range(len(times)):
+		if ele[i]==0:
+			if times[i]%7200.==0 and times[i] not in _times and time_lb<=times[i] and times[i]<=time_ub:
+				index.append(i)
+				_times.append(times[i])
+		else:
+			if times[i]%step==0 and times[i] not in _times and time_lb<=times[i] and times[i]<=time_ub:
+				index.append(i)
+				_times.append(times[i])
+
+	# Getting inputs based on filtered times
+	times = times[index]/3600.
+	times = times.flatten()
+	CG = CG[index,:]
+	m_flow_tb = m_flow_tb[index]
+	Tamb = Tamb[index]
+	h_ext = h_ext[index]
+	ele = ele[index]
+	on_forecast = on_forecast[index]
+
+	tm = np.mod(times,24)
+	inds = np.where(tm==0)[0]
+
+	for i in range(len(inds)-1):
+		if not np.any(on_forecast[inds[i]:inds[i+1]]==1):
+			m_flow_tb[inds[i]:inds[i+1]]=0
+			CG[inds[i]:inds[i+1],:]=0
+
+	# Instantiating variables
+	field_off = [0]; start = []; stop = []
+	for i in range(1,times.shape[0]-1):
+		if m_flow_tb[i]==0 and m_flow_tb[i+1]==0 and m_flow_tb[i-1]==0:
+			field_off.append(i)
+		if m_flow_tb[i]==0 and m_flow_tb[i+1]>0 and m_flow_tb[i-1]==0:
+			start.append(i)
+		if m_flow_tb[i]==0 and m_flow_tb[i+1]==0 and m_flow_tb[i-1]>0:
+			stop.append(i)
+	field_off.append(times.shape[0]-1)
+	stress = np.zeros((times.shape[0],model.nz))
+	Tf = model.T_in*np.ones((times.shape[0],model.nz+1))
+	for i in field_off:
+		Tf[i,:] = 293.15*np.ones((model.nz+1,))
+	for i in start:
+		Tf[i,:] = 533.15*np.ones((model.nz+1,))
+	for i in stop:
+		Tf[i,:] = 533.15*np.ones((model.nz+1,))
+	qnet = np.zeros((times.shape[0],2*model.nt-1,model.nz))
+
+	# Running thermal model
+	for k in tqdm(range(model.nz)):
+		Qnet = model.Temperature(m_flow_tb, Tf[:,k], Tamb, CG[:,k], h_ext)
+		C = model.specificHeatCapacityCp(Tf[:,k])*m_flow_tb
+		Tf[:,k+1] = Tf[:,k] + np.divide(Qnet, C, out=np.zeros_like(C), where=C!=0)
+		stress[:,k] = model.s/1e6
+		qnet[:,:,k] = model.qnet/1e6
+
+	# Getting internal pressure
+	pressure = np.where(m_flow_tb>0, 0.1, m_flow_tb)
+	pressure = pressure.flatten()
+	lb = model.nbins*(panel-1)
+	ub = lb + model.nbins
+
+	ndays = (days[1]-days[0])
+
+	loadfolder = os.path.join(os.getcwd(),'results_%s_d%s'%(case,days[0]))
+	savefolder = os.path.join(os.getcwd(),'results_%s_d%s'%(case,days[1]))
+	if not os.path.isdir(savefolder):
+		os.mkdir(savefolder)
+
+	Ro = model.Ro
+	thickness = model.thickness
+	H_rec = model.H_rec
+	nt = 2*model.nt-1
+	nbins = model.nbins
+
+	# Creating the hdf5 model
+	setup_problem(Ro,
+	              thickness,
+	              H_rec,
+	              nr,
+	              nt,
+	              nbins,
+	              times,
+	              Tf[:,lb:ub],
+	              qnet[:,:,lb:ub],
+	              pressure,
+	              T_base = 293.15,
+	              days=ndays)
+
+	# Running srlife
+	if days[0]>0:
+		load_state0 = True
+	life = run_problem(
+	              position,
+	              nbins,
+	              nthreads=nthreads,
+	              load_state0=load_state0,
+	              savestate=True,
+	              loadfolder=loadfolder,
+	              savefolder=savefolder,
+	              debug=debug)
+
+	scipy.io.savemat('%s/inputs.mat'%savefolder,{
+	              'times':times,
+	              'qnet':qnet,
+	              'Tf':Tf,
+	              'pressure':pressure})
+
+	# Plotting thermal results
+	fig, axes = plt.subplots(2,3, figsize=(18,8))
+
+	axes[0,0].plot(times, Tf[:,lb:ub])
+	axes[0,0].set_ylabel(r'$T_\mathrm{f}$ [K]')
+	axes[0,0].set_xlabel(r'$t$ [h]')
+
+	axes[0,1].plot(times, qnet[:,0,lb:ub])
+	axes[0,1].set_ylabel(r'$q^{\prime\prime}_\mathrm{net}$ [MW/m$^2$]')
+	axes[0,1].set_xlabel(r'$t$ [h]')
+
+	axes[0,2].plot(times, pressure)
+	axes[0,2].set_ylabel(r'$P$ [MPa]')
+	axes[0,2].set_xlabel(r'$t$ [h]')
+
+	quadrature_results = scipy.io.loadmat('%s/quadrature_results.mat'%(savefolder))
+
+	vm = np.sqrt((
+	              (quadrature_results['stress_xx'] - quadrature_results['stress_yy'])**2.0 + 
+	              (quadrature_results['stress_yy'] - quadrature_results['stress_zz'])**2.0 + 
+	              (quadrature_results['stress_zz'] - quadrature_results['stress_xx'])**2.0 + 
+	              6.0 * (quadrature_results['stress_xy']**2.0 + 
+	              quadrature_results['stress_yz']**2.0 + 
+	              quadrature_results['stress_xz']**2.0))/2.0)
+
+	em = np.sqrt((
+	              (quadrature_results['mechanical_strain_xx'] - quadrature_results['mechanical_strain_yy'])**2.0 + 
+	              (quadrature_results['mechanical_strain_yy'] - quadrature_results['mechanical_strain_zz'])**2.0 + 
+	              (quadrature_results['mechanical_strain_zz'] - quadrature_results['mechanical_strain_xx'])**2.0 + 
+	              6.0 * (quadrature_results['mechanical_strain_xy']**2.0 + 
+	              quadrature_results['mechanical_strain_yz']**2.0 + 
+	              quadrature_results['mechanical_strain_xz']**2.0))/2.0)
+
+	axes[1,0].plot(times,vm[:,0,0],label='Inner')
+	axes[1,0].plot(times,vm[:,727,0],label='Outer')
+	axes[1,0].set_xlabel(r'$t$ [h]')
+	axes[1,0].set_ylabel(r'$\sigma_\mathrm{crown,eq}$ [MPa]')
+	axes[1,0].legend(loc="best", borderaxespad=0, ncol=1, frameon=False)
+
+	axes[1,1].plot(times,quadrature_results['temperature'][:,0,0]-273.15,label='Inner')
+	axes[1,1].plot(times,quadrature_results['temperature'][:,727,0]-273.15,label='Outer')
+	axes[1,1].set_xlabel(r'$t$ [h]')
+	axes[1,1].set_ylabel(r'$T_\mathrm{crown}$ [\textdegree C]')
+	axes[1,1].set_ylim([-0.05,700])
+	axes[1,1].legend(loc="best", borderaxespad=0, ncol=1, frameon=False)
+
+	axes[1,2].plot(times,em[:,0,0],label='Inner')
+	axes[1,2].plot(times,em[:,727,0],label='Outer')
+	axes[1,2].set_xlabel(r'$t$ [h]')
+	axes[1,2].set_ylabel(r'$\epsilon_\mathrm{crown,eq}$ [mm/mm]')
+	axes[1,2].legend(loc="best", borderaxespad=0, ncol=1, frameon=False)
+
+	plt.tight_layout()
+	plt.savefig('%s/results_%s_d%s'%(savefolder,case,days[1]))
+
 if __name__=='__main__':
 	parser = argparse.ArgumentParser(description='Estimates average damage of a representative tube in a receiver panel')
 	parser.add_argument('--panel', type=int, default=4, help='Panel to be simulated. Default=1')
