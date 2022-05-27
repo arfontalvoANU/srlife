@@ -13,6 +13,9 @@ from numpy.ctypeslib import ndpointer
 from functools import partial
 from multiprocessing import Pool
 from tqdm import tqdm
+from math import exp, log, sqrt, pi, ceil, floor, asin
+import nashTubeStress as nts
+import coolant
 
 strMatNormal = lambda a: [''.join(s).rstrip() for s in a]
 strMatTrans  = lambda a: [''.join(s).rstrip() for s in zip(*a)]
@@ -279,12 +282,22 @@ def thermal_verification():
 
 	model = receiver_cyl(Ri = 42/2000, Ro = 45/2000, R_fouling=8.808e-5, ab = 0.93, em = 0.87, kp = 21.0)                   # Instantiating model with the gemasolar geometry
 	Tf = model.T_in*np.ones((1,model.nz+1))
+	Tf_nts = model.T_in*np.ones((1,model.nz+1))
 	m_flow_tb = np.array([4.3])
 	CG = np.genfromtxt('fluxInput.csv', delimiter=',').reshape(1,model.nz)*1e6
 	Tamb = np.array([298.15])
 	h_ext = np.array([0])
 	T_o = np.zeros((m_flow_tb.shape[0],model.nz))
 	T_i = np.zeros((m_flow_tb.shape[0],model.nz))
+
+	# nashTubeStress objetcs
+	g = nts.Grid(nr=30, nt=model.nt, rMin=model.Ri, rMax=model.Ro)
+	s = nts.Solver(g, debug=False, CG=CG[0,0], k=model.kp, T_int=model.T_in, R_f=model.R_fouling,
+                   A=model.ab, epsilon=model.em, T_ext=Tamb[0], h_ext=h_ext[0],
+                   P_i=0e5, alpha=model.l, E=model.E, nu=model.nu, n=1,
+                   bend=False)
+	s.extBC = s.extTubeHalfCosFluxRadConvAdiabaticBack
+	s.intBC = s.intTubeConv
 
 	# Running thermal model
 	for k in tqdm(range(model.nz)):
@@ -293,6 +306,17 @@ def thermal_verification():
 		Tf[:,k+1] = Tf[:,k] + np.divide(Qnet, C, out=np.zeros_like(C), where=C!=0)
 		T_o[:,k] = model.To
 		T_i[:,k] = model.Ti
+		# begin nashTubeStress
+		salt = coolant.nitrateSalt(False)
+		salt.update(Tf_nts[0,k])
+		h_int, dP = coolant.HTC(False, salt, model.Ri, model.Ro, 20, 'Dittus', 'mdot', m_flow_tb[0])
+		s.h_int = h_int
+		s.CG = CG[0,k]
+		ret = s.solve(eps=1e-6)
+		s.postProcessing()
+		Q = 2*np.pi*model.kp*s.B0*model.dz
+		Tf_nts[0,k+1] = Tf[0,k] + Q/(model.specificHeatCapacityCp(Tf_nts[0,k])*m_flow_tb[0])
+		# end nashTubeStress
 
 	data = {}
 	data['T_o'] = T_o
