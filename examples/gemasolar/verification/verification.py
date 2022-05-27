@@ -25,7 +25,7 @@ class receiver_cyl:
 	def __init__(self,coolant = 'salt', Ri = 57.93/2000, Ro = 60.33/2000, T_in = 290, T_out = 565,
                       nz = 450, nt = 46, R_fouling = 0.0, ab = 0.94, em = 0.88, kp = 16.57, H_rec = 10.5, D_rec = 8.5,
                       nbins = 50, alpha = 15.6e-6, Young = 186e9, poisson = 0.31,
-                      debugfolder = os.path.expanduser('~'), debug = False, verification = False):
+                      debugfolder = os.path.expanduser('~'), debug = False, verification = False, Dittus=True):
 		self.coolant = coolant
 		self.Ri = Ri
 		self.Ro = Ro
@@ -72,6 +72,7 @@ class receiver_cyl:
 						ctypes.c_double,
 						ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),
 						ndpointer(ctypes.c_double, flags="C_CONTIGUOUS")]
+		self.Dittus = Dittus
 
 	def import_mat(self,fileName):
 		mat = scipy.io.loadmat(fileName, chars_as_strings=False)
@@ -176,8 +177,11 @@ class receiver_cyl:
 		Pr = mu * C / kf                           # HTF Prandtl number
 
 		if self.coolant == 'salt':
-			f = pow(1.82*np.log10(Re) - 1.64, -2)
-			Nu = (f/8)*(Re - 1000)*Pr/(1 + 12.7*pow(f/8, 0.5)*(pow(Pr,0.66)-1))
+			if self.Dittus:
+				Nu = 0.023 * pow(Re, 0.8) * pow(Pr, 0.4)
+			else:
+				f = pow(1.82*np.log10(Re) - 1.64, -2)
+				Nu = (f/8)*(Re - 1000)*Pr/(1 + 12.7*pow(f/8, 0.5)*(pow(Pr,0.66)-1))
 		else:
 			Nu = 5.6 + 0.0165 * pow(Re*Pr, 0.85) * pow(Pr, 0.01);
 
@@ -280,7 +284,7 @@ class receiver_cyl:
 
 def thermal_verification():
 
-	model = receiver_cyl(Ri = 42/2000, Ro = 45/2000, R_fouling=8.808e-5, ab = 0.93, em = 0.87, kp = 21.0)                   # Instantiating model with the gemasolar geometry
+	model = receiver_cyl(Ri = 42/2000, Ro = 45/2000, R_fouling=8.808e-5, ab = 0.93, em = 0.87, kp = 21.0, Dittus=False)                   # Instantiating model with the gemasolar geometry
 	Tf = model.T_in*np.ones((1,model.nz+1))
 	Tf_nts = model.T_in*np.ones((1,model.nz+1))
 	m_flow_tb = np.array([4.3])
@@ -289,6 +293,8 @@ def thermal_verification():
 	h_ext = np.array([0])
 	T_o = np.zeros((m_flow_tb.shape[0],model.nz))
 	T_i = np.zeros((m_flow_tb.shape[0],model.nz))
+	T_i_nts = np.zeros((m_flow_tb.shape[0],model.nz))
+	T_o_nts = np.zeros((m_flow_tb.shape[0],model.nz))
 
 	# nashTubeStress objetcs
 	g = nts.Grid(nr=30, nt=model.nt, rMin=model.Ri, rMax=model.Ro)
@@ -315,13 +321,10 @@ def thermal_verification():
 		ret = s.solve(eps=1e-6)
 		s.postProcessing()
 		Q = 2*np.pi*model.kp*s.B0*model.dz
-		Tf_nts[0,k+1] = Tf[0,k] + Q/(model.specificHeatCapacityCp(Tf_nts[0,k])*m_flow_tb[0])
+		Tf_nts[0,k+1] = Tf_nts[0,k] + Q/(model.specificHeatCapacityCp(Tf_nts[0,k])*m_flow_tb[0])
+		T_i_nts[0,k] = s.T[0,0]
+		T_o_nts[0,k] = s.T[0,-1]
 		# end nashTubeStress
-
-	data = {}
-	data['T_o'] = T_o
-	data['T_i'] = T_i
-	scipy.io.savemat('verification_res.mat',data)
 
 	x = np.linspace(0,model.H_rec*model.nz/model.nbins,model.nz)
 	data = np.genfromtxt('verification.csv',delimiter=",", skip_header=1)
@@ -335,21 +338,38 @@ def thermal_verification():
 	xp = xpd[np.logical_not(np.isnan(xpd))]
 	yp = ypd[np.logical_not(np.isnan(ypd))]
 
-	p = interp1d(xp,yp,kind='cubic',bounds_error=False,fill_value=np.max(yp))
-	f = interp1d(xf,yf,kind='cubic',bounds_error=False,fill_value=np.max(yf))
+	data = {}
+	# Sanchez-Gonzalez et al.
+	data['xf'] = xf
+	data['yf'] = yf
+	data['xp'] = xp
+	data['yp'] = yp
+	# Proposed model data
+	data['z'] = x
+	data['T_o'] = T_o
+	data['T_i'] = T_i
+	data['Tf'] = Tf
+	# Logie et al.
+	data['z_nts'] = x
+	data['T_i_nts'] = T_i_nts
+	data['T_o_nts'] = T_o_nts
+	data['Tf_nts'] = Tf_nts
+	scipy.io.savemat('verification_res.mat',data)
 
-	T_i_paper = p(x)
-	T_f_paper = f(x)
+def plottingTemperatures():
+	data = scipy.io.loadmat('verification_res.mat')
 
-	fig, axes = plt.subplots(1,2, figsize=(12,4))
-	axes[0].plot(x,T_i.reshape(-1)-273.15,label='Proposed model')
+	fig, axes = plt.subplots(1,2, figsize=(18,4))
+	axes[0].plot(data['xp'].reshape(-1),data['yp'].reshape(-1),label='Sánchez-González et al.]')
+	axes[0].plot(data['z_nts'].reshape(-1),data['T_i_nts'].reshape(-1)-273.15,label='Logie et al.')
+	axes[0].plot(data['z'].reshape(-1),data['T_i'].reshape(-1)-273.15,label='Proposed model')
 	axes[0].set_xlabel(r'$z$ [m]')
 	axes[0].set_ylabel(r'$T_\mathrm{crown}$ [\textdegree C]')
-	axes[0].plot(xp,yp,label='Sánchez-González [1]')
 	axes[0].legend(loc="best", borderaxespad=0, ncol=1, frameon=False)
 
-	axes[1].plot(x,Tf.reshape(-1)[1:]-273.15,label='Proposed model')
-	axes[1].plot(xf,yf,label='Sánchez-González [1]')
+	axes[1].plot(data['xf'].reshape(-1),data['yf'].reshape(-1),label='Sánchez-González et al.')
+	axes[1].plot(data['z_nts'].reshape(-1),data['Tf_nts'].reshape(-1)[1:]-273.15,label='Logie et al.')
+	axes[1].plot(data['z'].reshape(-1),data['Tf'].reshape(-1)[1:]-273.15,label='Proposed model')
 	axes[1].legend(loc="best", borderaxespad=0, ncol=1, frameon=False)
 	plt.show()
 
@@ -361,6 +381,7 @@ if __name__=='__main__':
 
 	tinit = time.time()
 	thermal_verification()
+	plottingTemperatures()
 	seconds = time.time() - tinit
 	m, s = divmod(seconds, 60)
 	h, m = divmod(m, 60)
