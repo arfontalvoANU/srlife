@@ -201,10 +201,10 @@ class receiver_cyl:
 		To = -0.5*np.sqrt(c2) + 0.5*np.sqrt((2.*b)/(a*np.sqrt(c2)) - c2)
 		Ti = (To + hf*self.Ri*self.ln/self.kp*Tf)/(1 + hf*self.Ri*self.ln/self.kp)
 		qnet = hf*(Ti - Tf)
-		Qnet = qnet.sum(axis=1)*self.Ri*self.dt*self.dz
+		_qnet = np.concatenate((qnet[:,1:],qnet[:,::-1]),axis=1)
+		Qnet = _qnet.sum(axis=1)*self.Ri*self.dt*self.dz
 		net_zero = np.where(Qnet<0)[0]
 		Qnet[net_zero] = 0.0
-		_qnet = np.concatenate((qnet[:,1:],qnet[:,::-1]),axis=1)
 		_qnet[net_zero,:] = 0.0
 		self.qnet = _qnet
 
@@ -212,7 +212,6 @@ class receiver_cyl:
 			BDp = self.Fourier(Ti[t,:])
 			BDpp = self.Fourier(To[t,:])
 			B0 = (BDpp[0] - BDp[0])/self.ln
-			Qnet[t] = 2*np.pi*self.kp*B0*self.dz*np.ones_like(Qnet)
 
 		# Fourier coefficients
 		self.sigmaEq, self.epsilon = self.crown_stress(Ti,To)
@@ -287,7 +286,7 @@ def thermal_verification():
 	model = receiver_cyl(Ri = 42/2000, Ro = 45/2000, R_fouling=8.808e-5, ab = 0.93, em = 0.87, kp = 21.0, Dittus=False)                   # Instantiating model with the gemasolar geometry
 	Tf = model.T_in*np.ones((1,model.nz+1))
 	Tf_nts = model.T_in*np.ones((1,model.nz+1))
-	m_flow_tb = np.array([4.3])
+	m_flow_tb = np.array([4.2])
 	CG = np.genfromtxt('fluxInput.csv', delimiter=',').reshape(1,model.nz)*1e6
 	Tamb = np.array([298.15])
 	h_ext = np.array([0])
@@ -297,12 +296,12 @@ def thermal_verification():
 	T_o_nts = np.zeros((m_flow_tb.shape[0],model.nz))
 
 	# nashTubeStress objetcs
-	g = nts.Grid(nr=30, nt=model.nt, rMin=model.Ri, rMax=model.Ro)
+	g = nts.Grid(nr=3, nt=model.nt, rMin=model.Ri, rMax=model.Ro)
 	s = nts.Solver(g, debug=False, CG=CG[0,0], k=model.kp, T_int=model.T_in, R_f=model.R_fouling,
                    A=model.ab, epsilon=model.em, T_ext=Tamb[0], h_ext=h_ext[0],
                    P_i=0e5, alpha=model.l, E=model.E, nu=model.nu, n=1,
                    bend=False)
-	s.extBC = s.extTubeHalfCosFluxRadConvAdiabaticBack
+	s.extBC = s.extTubeHalfCosFluxRadConv
 	s.intBC = s.intTubeConv
 
 	# Running thermal model
@@ -312,66 +311,83 @@ def thermal_verification():
 		Tf[:,k+1] = Tf[:,k] + np.divide(Qnet, C, out=np.zeros_like(C), where=C!=0)
 		T_o[:,k] = model.To
 		T_i[:,k] = model.Ti
-		# begin nashTubeStress
+		# Reference data Logie et al. (2018): https://doi.org/10.1016/j.solener.2017.12.003
 		salt = coolant.nitrateSalt(False)
 		salt.update(Tf_nts[0,k])
-		h_int, dP = coolant.HTC(False, salt, model.Ri, model.Ro, 20, 'Dittus', 'mdot', m_flow_tb[0])
+		h_int, dP = coolant.HTC(False, salt, model.Ri, model.Ro, model.kp, 'Dittus', 'mdot', m_flow_tb[0])
 		s.h_int = h_int
 		s.CG = CG[0,k]
+		s.T_int = Tf_nts[0,k]
 		ret = s.solve(eps=1e-6)
 		s.postProcessing()
 		Q = 2*np.pi*model.kp*s.B0*model.dz
-		Tf_nts[0,k+1] = Tf_nts[0,k] + Q/(model.specificHeatCapacityCp(Tf_nts[0,k])*m_flow_tb[0])
+		Tf_nts[0,k+1] = Tf_nts[0,k] + Q/salt.Cp/m_flow_tb[0]
 		T_i_nts[0,k] = s.T[0,0]
 		T_o_nts[0,k] = s.T[0,-1]
 		# end nashTubeStress
 
 	x = np.linspace(0,model.H_rec*model.nz/model.nbins,model.nz)
 	data = np.genfromtxt('verification.csv',delimiter=",", skip_header=1)
+	# Reference data Sanchez-Gonzalez et al. (2017): https://doi.org/10.1016/j.solener.2015.12.055
 	xfd = data[:,6]
 	yfd = data[:,7]
 	xpd = data[:,4]
 	ypd = data[:,5]
+	# Reference data Soo Too et al. (2019): https://doi.org/10.1016/j.applthermaleng.2019.03.086
+	xj = data[:,12]
+	yfj = data[:,15]
+	ypj = data[:,13]
 
 	xf = xfd[np.logical_not(np.isnan(xfd))]
 	yf = yfd[np.logical_not(np.isnan(yfd))]
 	xp = xpd[np.logical_not(np.isnan(xpd))]
 	yp = ypd[np.logical_not(np.isnan(ypd))]
+	xj = xj[np.logical_not(np.isnan(ypd))]
+	yfj = yfj[np.logical_not(np.isnan(ypd))]
+	ypj = ypj[np.logical_not(np.isnan(ypd))]
 
 	data = {}
-	# Sanchez-Gonzalez et al.
+	# Saving reference data
 	data['xf'] = xf
 	data['yf'] = yf
 	data['xp'] = xp
 	data['yp'] = yp
-	# Proposed model data
-	data['z'] = x
-	data['T_o'] = T_o
-	data['T_i'] = T_i
-	data['Tf'] = Tf
-	# Logie et al.
+	data['xj'] = xj
+	data['yfj'] = yfj
+	data['ypj'] = ypj
 	data['z_nts'] = x
 	data['T_i_nts'] = T_i_nts
 	data['T_o_nts'] = T_o_nts
 	data['Tf_nts'] = Tf_nts
+
+	# Saving proposed model data
+	data['z'] = x
+	data['T_o'] = T_o
+	data['T_i'] = T_i
+	data['Tf'] = Tf
 	scipy.io.savemat('verification_res.mat',data)
 
 def plottingTemperatures():
 	data = scipy.io.loadmat('verification_res.mat')
 
 	fig, axes = plt.subplots(1,2, figsize=(18,4))
-	axes[0].plot(data['xp'].reshape(-1),data['yp'].reshape(-1),label='Sánchez-González et al.]')
-	axes[0].plot(data['z_nts'].reshape(-1),data['T_i_nts'].reshape(-1)-273.15,label='Logie et al.')
-	axes[0].plot(data['z'].reshape(-1),data['T_i'].reshape(-1)-273.15,label='Proposed model')
+	axes[0].plot(data['xp'].reshape(-1),data['yp'].reshape(-1),label='Sánchez-González et al. (2017)')
+	axes[0].plot(data['z_nts'].reshape(-1),data['T_i_nts'].reshape(-1)-273.15,label='Logie et al. (2018)')
+	axes[0].plot(data['xj'].reshape(-1),data['ypj'].reshape(-1),label='Soo Too et al. (2019)')
+	axes[0].plot(data['z'].reshape(-1),data['T_i'].reshape(-1)-273.15,label='Fontalvo (2022)')
 	axes[0].set_xlabel(r'$z$ [m]')
 	axes[0].set_ylabel(r'$T_\mathrm{crown}$ [\textdegree C]')
 	axes[0].legend(loc="best", borderaxespad=0, ncol=1, frameon=False)
 
-	axes[1].plot(data['xf'].reshape(-1),data['yf'].reshape(-1),label='Sánchez-González et al.')
-	axes[1].plot(data['z_nts'].reshape(-1),data['Tf_nts'].reshape(-1)[1:]-273.15,label='Logie et al.')
-	axes[1].plot(data['z'].reshape(-1),data['Tf'].reshape(-1)[1:]-273.15,label='Proposed model')
+	axes[1].plot(data['xf'].reshape(-1),data['yf'].reshape(-1),label='Sánchez-González et al. (2017)')
+	axes[1].plot(data['z_nts'].reshape(-1),data['Tf_nts'].reshape(-1)[1:]-273.15,label='Logie et al. (2018)')
+	axes[1].plot(data['xj'].reshape(-1),data['yfj'].reshape(-1),label='Soo Too et al. (2019)')
+	axes[1].plot(data['z'].reshape(-1),data['Tf'].reshape(-1)[1:]-273.15,label='Fontalvo (2022)')
+	axes[1].set_xlabel(r'$z$ [m]')
+	axes[1].set_ylabel(r'$T_\mathrm{fluid}$ [\textdegree C]')
 	axes[1].legend(loc="best", borderaxespad=0, ncol=1, frameon=False)
-	plt.show()
+	plt.tight_layout()
+	plt.savefig('Verification.png',dpi=300)
 
 if __name__=='__main__':
 	parser = argparse.ArgumentParser(description='Estimates average damage of a representative tube in a receiver panel')
