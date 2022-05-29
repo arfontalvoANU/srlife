@@ -296,7 +296,7 @@ def thermal_verification():
 	T_o_nts = np.zeros((m_flow_tb.shape[0],model.nz))
 
 	# nashTubeStress objetcs
-	g = nts.Grid(nr=3, nt=model.nt, rMin=model.Ri, rMax=model.Ro)
+	g = nts.Grid(nr=30, nt=model.nt, rMin=model.Ri, rMax=model.Ro)
 	s = nts.Solver(g, debug=False, CG=CG[0,0], k=model.kp, T_int=model.T_in, R_f=model.R_fouling,
                    A=model.ab, epsilon=model.em, T_ext=Tamb[0], h_ext=h_ext[0],
                    P_i=0e5, alpha=model.l, E=model.E, nu=model.nu, n=1,
