@@ -26,7 +26,7 @@ def print_table_latex(model, data):
 		lb = model.nbins*i
 		ub = lb + model.nbins - 1
 		j = np.argmin(data['max_cycles'][lb:ub])
-		print('%d & %d & %.1e & %.1e & %4.2f \\\\'%(
+		print('%d & %4.2f & %.1e & %.1e & %4.3f \\\\'%(
 			i+1,
 			model.H_rec*(j+1)/model.nbins,
 			np.cumsum(data['Dc'],axis=0)[-1,lb+j],
