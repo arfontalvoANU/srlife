@@ -222,10 +222,11 @@ def HTC(debug, thermo, a, b, k, correlation, mode, arg):
         # in Turbulent Pipe and Channel Flow,
         # International Chemical Engineering,
         # Vol. 16, No. 2, 1976, pp. 359-68.
-        if thermo.Pr < 1.5:
-            Nu = 0.0214*(pow(Re, 0.8) - 100)*pow(thermo.Pr, 0.4)
-        else:
-            Nu = 0.012*(pow(Re, 0.87) - 280)*pow(thermo.Pr, 0.4)
+        Nu = (f/8)*(Re - 1000)*thermo.Pr/(1 + 12.7*pow(f/8, 0.5)*(pow(thermo.Pr,0.66)-1))
+        #if thermo.Pr < 1.5:
+        #    Nu = 0.0214*(pow(Re, 0.8) - 100)*pow(thermo.Pr, 0.4)
+        #else:
+        #    Nu = 0.012*(pow(Re, 0.87) - 280)*pow(thermo.Pr, 0.4)
     else: sys.exit('Correlation: {} not recognised'.format(correlation))
     h = Nu * thermo.kappa / d_i
     Bi = (t * h) / k
