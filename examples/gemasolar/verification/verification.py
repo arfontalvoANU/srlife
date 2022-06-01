@@ -35,6 +35,8 @@ def thermal_verification():
 	T_i = np.zeros(model.nz)
 	T_i_nts = np.zeros(model.nz)
 	T_o_nts = np.zeros(model.nz)
+	s_nts = np.zeros(model.nz)
+	s_eq = np.zeros(model.nz)
 
 	# nashTubeStress objetcs
 	g = nts.Grid(nr=30, nt=model.nt, rMin=model.Ri, rMax=model.Ro)
@@ -55,7 +57,7 @@ def thermal_verification():
 		# Reference data Logie et al. (2018): https://doi.org/10.1016/j.solener.2017.12.003
 		salt = coolant.nitrateSalt(False)
 		salt.update(Tf_nts[k])
-		h_int, dP = coolant.HTC(False, salt, model.Ri, model.Ro, model.kp, 'Dittus', 'mdot', m_flow_tb)
+		h_int, dP = coolant.HTC(False, salt, model.Ri, model.Ro, model.kp, 'Gnielinski', 'mdot', m_flow_tb)
 		s.h_int = h_int
 		s.CG = CG[k]
 		s.T_int = Tf_nts[k]
@@ -65,6 +67,8 @@ def thermal_verification():
 		Tf_nts[k+1] = Tf_nts[k] + Q/salt.Cp/m_flow_tb
 		T_i_nts[k] = s.T[0,0]
 		T_o_nts[k] = s.T[0,-1]
+		s_nts[k] = s.sigmaEq[0,-1]
+		s_eq[k] = model.sigmaEq[0,0]
 		# end nashTubeStress
 
 	# Reference data Sanchez-Gonzalez et al. (2017): https://doi.org/10.1016/j.solener.2015.12.055
@@ -103,6 +107,8 @@ def thermal_verification():
 	data['T_i_nts'] = T_i_nts
 	data['T_o_nts'] = T_o_nts
 	data['Tf_nts'] = Tf_nts
+	data['s_nts'] = s_nts/1e6
+	data['s_eq'] = s_eq/1e6
 
 	# Saving proposed model data
 	data['z'] = z
@@ -116,13 +122,14 @@ def plottingTemperatures():
 	data = scipy.io.loadmat('verification_res.mat')
 
 	# Creating subplots
-	fig, axes = plt.subplots(1,2, figsize=(18,4))
+	fig, axes = plt.subplots(1,2, figsize=(12,4))
 
 	# Inner surface temperature of front tube
 	axes[0].plot(data['xp'].reshape(-1),data['yp'].reshape(-1),label='Sánchez-González et al. (2017)')
 	axes[0].plot(data['z_nts'].reshape(-1),data['T_i_nts'].reshape(-1)-273.15,label='Logie et al. (2018)')
 	axes[0].plot(data['xj'].reshape(-1),data['ypj'].reshape(-1),label='Soo Too et al. (2019)')
 	axes[0].plot(data['z'].reshape(-1),data['T_i'].reshape(-1)-273.15,label='Fontalvo (2022)')
+	axes[0].set_ylim([300,700])
 	axes[0].set_xlabel(r'$z$ [m]')
 	axes[0].set_ylabel(r'$T_\mathrm{crown}$ [\textdegree C]')
 	axes[0].legend(loc="best", borderaxespad=0, ncol=1, frameon=False)
@@ -132,11 +139,28 @@ def plottingTemperatures():
 	axes[1].plot(data['z_nts'].reshape(-1),data['Tf_nts'].reshape(-1)[1:]-273.15,label='Logie et al. (2018)')
 	axes[1].plot(data['xj'].reshape(-1),data['yfj'].reshape(-1),label='Soo Too et al. (2019)')
 	axes[1].plot(data['z'].reshape(-1),data['Tf'].reshape(-1)[1:]-273.15,label='Fontalvo (2022)')
+	axes[1].set_ylim([250,600])
 	axes[1].set_xlabel(r'$z$ [m]')
 	axes[1].set_ylabel(r'$T_\mathrm{fluid}$ [\textdegree C]')
 	axes[1].legend(loc="best", borderaxespad=0, ncol=1, frameon=False)
+
 	plt.tight_layout()
+	axes[0].text(0.05,0.9,'(a)', horizontalalignment='center', verticalalignment='center', transform=axes[0].transAxes)
+	axes[1].text(0.05,0.9,'(b)', horizontalalignment='center', verticalalignment='center', transform=axes[1].transAxes)
 	plt.savefig('Verification.png',dpi=300)
+
+	# Creating subplots
+	fig, axes = plt.subplots(1,1, figsize=(6,4))
+
+	# Stress
+	axes.plot(data['z_nts'].reshape(-1),data['s_nts'].reshape(-1),label='Logie et al. (2018)')
+	axes.plot(data['z'].reshape(-1),data['s_eq'].reshape(-1),ls='None',marker='o',markersize=2.5,markerfacecolor='#ffffff',label='Fontalvo (2022)')#markeredgewidth=2.5,
+	axes.set_ylim([0,800])
+	axes.set_xlabel(r'$z$ [m]')
+	axes.set_ylabel(r'$\sigma_\mathrm{crown}$ [MPa]')
+	axes.legend(loc="best", borderaxespad=0, ncol=1, frameon=False)
+	plt.tight_layout()
+	plt.savefig('Stress_verification.png',dpi=300)
 
 if __name__=='__main__':
 	parser = argparse.ArgumentParser(description='Estimates average damage of a representative tube in a receiver panel')
