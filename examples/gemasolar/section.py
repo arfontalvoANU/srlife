@@ -212,7 +212,7 @@ class receiver_cyl:
 			BDp = self.Fourier(Ti[t,:])
 
 		# Fourier coefficients
-		self.sigmaEq, self.epsilon = self.crown_stress(Ti,To)
+		self.stress, self.epsilon = self.crown_stress(Ti,To)
 		self.Ti = Ti[:,0]
 		self.To = To[:,0]
 		return Qnet
@@ -223,14 +223,14 @@ class receiver_cyl:
 		return coefs
 
 	def crown_stress(self, Ti, To):
-		stress = np.zeros((Ti.shape[0],2))
+		stress = np.zeros((Ti.shape[0],2,6))
 		strain = np.zeros((Ti.shape[0],2,6))
 		ntimes = Ti.shape[0]
 		for t in range(ntimes):
 			BDp = self.Fourier(Ti[t,:])
 			BDpp = self.Fourier(To[t,:])
-			stress[t,0], strain[t,0,:] = self.Thermoelastic(To[t,0], self.Ro, 0., BDp, BDpp)
-			stress[t,1], strain[t,1,:] = self.Thermoelastic(Ti[t,0], self.Ri, 0., BDp, BDpp)
+			stress[t,0,:], strain[t,0,:] = self.Thermoelastic(To[t,0], self.Ro, 0., BDp, BDpp)
+			stress[t,1,:], strain[t,1,:] = self.Thermoelastic(Ti[t,0], self.Ri, 0., BDp, BDpp)
 		return stress,strain
 
 	def Thermoelastic(self, T, r, theta, BDp, BDpp):
@@ -255,11 +255,12 @@ class receiver_cyl:
 		Qrtheta = kappa_tau*C*(1 -a2/r2)*(1 -b2/r2);
 
 		Q_Eq = np.sqrt(0.5*(pow(Qr -Qtheta,2) + pow(Qr -Qz,2) + pow(Qz -Qtheta,2)) + 6*pow(Qrtheta,2));
-		Q = np.zeros(3)
+		Q = np.zeros((6,))
 		Q[0] = Qr; Q[1] = Qtheta; Q[2] = Qz;
 		e = np.zeros((6,))
 		e[0] = 1/self.E*(Qr - self.nu*(Qtheta + Qz))
 		e[1] = 1/self.E*(Qtheta - self.nu*(Qr + Qz))
+		e[2] = -self.l*T_theta
 
 		if self.verification:
 			print("=============== NPS Sch. 5S 1\" S31609 at 450degC ===============")
@@ -277,7 +278,7 @@ class receiver_cyl:
 			print("Q_z [MPa]:      -389.5197       %4.4f"%(Qz/1e6))
 			print("Q_Eq [MPa]:      350.1201       %4.4f"%(Q_Eq/1e6))
 
-		return Q_Eq,e
+		return Q,e
 
 def setup_problem(Ro, th, H_rec, Nr, Nt, Nz, times, fluid_temp, h_flux, pressure, T_base, folder=None, days=1):
 	# Setup the base receiver

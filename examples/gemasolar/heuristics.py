@@ -194,8 +194,8 @@ def run_heuristics(days,step,gemasolar_600=False):
 		if m_flow_tb[i]==0 and m_flow_tb[i+1]==0 and m_flow_tb[i-1]>0:
 			stop.append(i)
 	field_off.append(times.shape[0]-1)
-	sigmaEq_o = np.zeros((times.shape[0],model.nz))
-	sigmaEq_i = np.zeros((times.shape[0],model.nz))
+	sigma_o = np.zeros((times.shape[0],model.nz,6))
+	sigma_i = np.zeros((times.shape[0],model.nz,6))
 	epsilon_o = np.zeros((times.shape[0],model.nz,6))
 	epsilon_i = np.zeros((times.shape[0],model.nz,6))
 	T_o = np.zeros((times.shape[0],model.nz))
@@ -215,13 +215,25 @@ def run_heuristics(days,step,gemasolar_600=False):
 		Qnet = model.Temperature(m_flow_tb, Tf[:,k], Tamb, CG[:,k], h_ext)
 		C = model.specificHeatCapacityCp(Tf[:,k])*m_flow_tb
 		Tf[:,k+1] = Tf[:,k] + np.divide(Qnet, C, out=np.zeros_like(C), where=C!=0)
-		sigmaEq_o[:,k] = model.sigmaEq[:,0]/1e6
-		sigmaEq_i[:,k] = model.sigmaEq[:,1]/1e6
+		sigma_o[:,k,:] = model.stress[:,0,:]/1e6
+		sigma_i[:,k,:] = model.stress[:,1,:]/1e6
 		epsilon_o[:,k,:] = model.epsilon[:,0,:]
 		epsilon_i[:,k,:] = model.epsilon[:,1,:]
 		qnet[:,:,k] = model.qnet/1e6
 		T_o[:,k] = model.To
 		T_i[:,k] = model.Ti
+
+	sigmaEq_o = np.sqrt((
+		(sigma_o[:,:,0] - sigma_o[:,:,1])**2.0 + 
+		(sigma_o[:,:,1] - sigma_o[:,:,2])**2.0 + 
+		(sigma_o[:,:,2] - sigma_o[:,:,0])**2.0 + 
+		6.0 * (sigma_o[:,:,3]**2.0 + sigma_o[:,:,4]**2.0 + sigma_o[:,:,5]**2.0))/2.0)
+
+	sigmaEq_i = np.sqrt((
+		(sigma_i[:,:,0] - sigma_i[:,:,1])**2.0 + 
+		(sigma_i[:,:,1] - sigma_i[:,:,2])**2.0 + 
+		(sigma_i[:,:,2] - sigma_i[:,:,0])**2.0 + 
+		6.0 * (sigma_i[:,:,3]**2.0 + sigma_i[:,:,4]**2.0 + sigma_i[:,:,5]**2.0))/2.0)
 
 	# Choose the material models
 	mat =     "A230"
@@ -269,8 +281,8 @@ def run_heuristics(days,step,gemasolar_600=False):
 
 	# Saving
 	data = {}
-	data['sigmaEq_o'] = sigmaEq_o
-	data['sigmaEq_i'] = sigmaEq_i
+	data['sigma_o'] = sigma_o
+	data['sigma_i'] = sigma_i
 	data['epsilon_o'] = epsilon_o
 	data['epsilon_i'] = epsilon_i
 	data['T_o'] = T_o
