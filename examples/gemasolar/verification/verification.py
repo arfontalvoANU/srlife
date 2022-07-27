@@ -15,15 +15,23 @@ import coolant
 sys.path.append('../')
 from section import *
 
-def thermal_verification():
+def thermal_verification(mdba_verification):
 	# Instantiating receiver model
 	model = receiver_cyl(Ri = 42/2000, Ro = 45/2000, R_fouling=8.808e-5, ab = 0.93, em = 0.87, kp = 21.0, Dittus=False)
 
-	# Importing solar flux Sanchez-Gonzalez et al. (2017): https://doi.org/10.1016/j.solener.2015.12.055
-	CG = np.genfromtxt('fluxInput.csv', delimiter=',')*1e6
+	if mdba_verification:
+		# Importing solar flux from MDBA output using flux limits from Sanchez-Gonzalez et al. (2017): https://doi.org/10.1016/j.solener.2015.12.055
+		CG = np.genfromtxt('MDBA_800H_flux_limits_sanchez-gonzalez.csv', delimiter=',')*1e6
+		# Mass flow rate calculated from MDBA output using flux limits from Sanchez-Gonzalez et al. (2017): https://doi.org/10.1016/j.solener.2015.12.055
+		m_flow_tb = 5.416542391767791
+	else:
+		# Importing solar flux Sanchez-Gonzalez et al. (2017): https://doi.org/10.1016/j.solener.2015.12.055
+		CG = np.genfromtxt('fluxInput.csv', delimiter=',')*1e6
+		# Mass flow rate from Sanchez-Gonzalez et al. (2017): https://doi.org/10.1016/j.solener.2015.12.055
+		m_flow_tb = 4.2
 
+	print('mass flow rate: %.2f'%m_flow_tb)
 	# Flow and thermal parameters Sanchez-Gonzalez et al. (2017): https://doi.org/10.1016/j.solener.2015.12.055
-	m_flow_tb = 4.2
 	Tamb = 298.15
 	h_ext = 0
 
@@ -68,7 +76,14 @@ def thermal_verification():
 		T_i_nts[k] = s.T[0,0]
 		T_o_nts[k] = s.T[0,-1]
 		s_nts[k] = s.sigmaEq[0,-1]
-		s_eq[k] = model.sigmaEq[0,0]
+
+		sigmaEq_o = np.sqrt((
+		(model.stress[:,:,0] - model.stress[:,:,1])**2.0 + 
+		(model.stress[:,:,1] - model.stress[:,:,2])**2.0 + 
+		(model.stress[:,:,2] - model.stress[:,:,0])**2.0 + 
+		6.0 * (model.stress[:,:,3]**2.0 + model.stress[:,:,4]**2.0 + model.stress[:,:,5]**2.0))/2.0)
+
+		s_eq[k] = sigmaEq_o[0,0]
 		# end nashTubeStress
 
 	# Reference data Sanchez-Gonzalez et al. (2017): https://doi.org/10.1016/j.solener.2015.12.055
@@ -164,11 +179,10 @@ def plottingTemperatures():
 
 if __name__=='__main__':
 	parser = argparse.ArgumentParser(description='Estimates average damage of a representative tube in a receiver panel')
-	parser.add_argument('--days', nargs=2, type=int, default=[0,1])
-	parser.add_argument('--step', type=float, default=900)
+	parser.add_argument('--mdba_verification', type=bool, default=False)
 	args = parser.parse_args()
 	tinit = time.time()
-	thermal_verification()
+	thermal_verification(args.mdba_verification)
 	plottingTemperatures()
 	seconds = time.time() - tinit
 	m, s = divmod(seconds, 60)
