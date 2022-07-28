@@ -6,31 +6,65 @@ mpl.rcParams['text.usetex'] = True
 mpl.rcParams['font.size'] = 14
 mpl.rcParams['font.family'] = 'Times'
 import os, sys, math, scipy.io, argparse
-import time, ctypes
+from scipy import optimize
+import time, ctypes, pickle
 from numpy.ctypeslib import ndpointer
 from tqdm import tqdm
 import nashTubeStress as nts
 import coolant
+import warnings
+warnings.filterwarnings('ignore')
 
 sys.path.append('../')
 from section import *
 
-def thermal_verification(mdba_verification):
+class mdba_results:
+	def __init__(self,filename,Tset):
+		fileo = open(filename,'rb')
+		data = pickle.load(fileo)
+		fileo.close()
+		q_net = data['q_net']
+		areas = data['areas']
+		self.m_flow = data['m'][0]/data['n_tubes'][0]
+		self.CG = q_net[data['fp'][0]]/areas[data['fp'][0]]
+		self.Tamb = 298.15
+		self.h_ext = 0
+		self.model = receiver_cyl(Ri = 42/2000, Ro = 45/2000, R_fouling=8.808e-5, ab = 0.93, em = 0.87, kp = 21.0, Dittus=False)
+		self.Tset=Tset
+	def f(self,m):
+		Tf = self.model.T_in*np.ones(self.model.nz+1)
+		for k in range(self.model.nz):
+			Qnet = self.model.Temperature(m, Tf[k], self.Tamb, self.CG[k], self.h_ext)
+			C = self.model.specificHeatCapacityCp(Tf[k])*m
+			Tf[k+1] = Tf[k] + Qnet/C
+		return abs(self.Tset-Tf[-1])
+	def solve(self):
+		prev = time.time()
+		res=optimize.minimize(self.f, 0.5*self.m_flow, method='COBYLA', bounds=(0,self.m_flow), options={'disp':True})
+		secs = time.time() - prev
+		mm, ss = divmod(secs, 60)
+		hh, mm = divmod(mm, 60)
+		print('	Simulation time: {:d}:{:02d}:{:02d}'.format(int(hh), int(mm), int(ss)))
+		return res.x[0]
+
+def thermal_verification(mdba_verification,filename):
+
 	# Instantiating receiver model
 	model = receiver_cyl(Ri = 42/2000, Ro = 45/2000, R_fouling=8.808e-5, ab = 0.93, em = 0.87, kp = 21.0, Dittus=False)
-
 	if mdba_verification:
+		T_set=565+273.15
 		# Importing solar flux from MDBA output using flux limits from Sanchez-Gonzalez et al. (2017): https://doi.org/10.1016/j.solener.2015.12.055
-		CG = np.genfromtxt('MDBA_800H_flux_limits_sanchez-gonzalez.csv', delimiter=',')*1e6
+		mdba = mdba_results(filename,T_set)
+		CG = mdba.CG
 		# Mass flow rate calculated from MDBA output using flux limits from Sanchez-Gonzalez et al. (2017): https://doi.org/10.1016/j.solener.2015.12.055
-		m_flow_tb = 5.416542391767791
+		m_flow_tb = mdba.solve()
 	else:
+		T_set=565+273.15
 		# Importing solar flux Sanchez-Gonzalez et al. (2017): https://doi.org/10.1016/j.solener.2015.12.055
 		CG = np.genfromtxt('fluxInput.csv', delimiter=',')*1e6
 		# Mass flow rate from Sanchez-Gonzalez et al. (2017): https://doi.org/10.1016/j.solener.2015.12.055
 		m_flow_tb = 4.2
 
-	print('mass flow rate: %.2f'%m_flow_tb)
 	# Flow and thermal parameters Sanchez-Gonzalez et al. (2017): https://doi.org/10.1016/j.solener.2015.12.055
 	Tamb = 298.15
 	h_ext = 0
@@ -47,7 +81,7 @@ def thermal_verification(mdba_verification):
 	s_eq = np.zeros(model.nz)
 
 	# nashTubeStress objetcs
-	g = nts.Grid(nr=30, nt=model.nt, rMin=model.Ri, rMax=model.Ro)
+	g = nts.Grid(nr=3, nt=model.nt, rMin=model.Ri, rMax=model.Ro)
 	s = nts.Solver(g, debug=False, CG=CG[0], k=model.kp, T_int=model.T_in, R_f=model.R_fouling,
                    A=model.ab, epsilon=model.em, T_ext=Tamb, h_ext=h_ext,
                    P_i=0e5, alpha=model.l, E=model.E, nu=model.nu, n=1,
@@ -85,6 +119,7 @@ def thermal_verification(mdba_verification):
 
 		s_eq[k] = sigmaEq_o[0,0]
 		# end nashTubeStress
+	print('	m_flow: %s	T_out: %.2f	res: %g'%(m_flow_tb,Tf[-1],abs(T_set-Tf[-1])))
 
 	# Reference data Sanchez-Gonzalez et al. (2017): https://doi.org/10.1016/j.solener.2015.12.055
 	data = np.genfromtxt('verification.csv',delimiter=",", skip_header=1)
@@ -111,6 +146,7 @@ def thermal_verification(mdba_verification):
 	data = {}
 
 	# Saving reference data
+	data['CG'] = CG
 	data['xf'] = xf
 	data['yf'] = yf
 	data['xp'] = xp
@@ -144,7 +180,6 @@ def plottingTemperatures():
 	axes[0].plot(data['z_nts'].reshape(-1),data['T_i_nts'].reshape(-1)-273.15,label='Logie et al. (2018)')
 	axes[0].plot(data['xj'].reshape(-1),data['ypj'].reshape(-1),label='Soo Too et al. (2019)')
 	axes[0].plot(data['z'].reshape(-1),data['T_i'].reshape(-1)-273.15,label='Fontalvo (2022)')
-	axes[0].set_ylim([300,700])
 	axes[0].set_xlabel(r'$z$ [m]')
 	axes[0].set_ylabel(r'$T_\mathrm{crown}$ [\textdegree C]')
 	axes[0].legend(loc="best", borderaxespad=0, ncol=1, frameon=False)
@@ -154,7 +189,6 @@ def plottingTemperatures():
 	axes[1].plot(data['z_nts'].reshape(-1),data['Tf_nts'].reshape(-1)[1:]-273.15,label='Logie et al. (2018)')
 	axes[1].plot(data['xj'].reshape(-1),data['yfj'].reshape(-1),label='Soo Too et al. (2019)')
 	axes[1].plot(data['z'].reshape(-1),data['Tf'].reshape(-1)[1:]-273.15,label='Fontalvo (2022)')
-	axes[1].set_ylim([250,600])
 	axes[1].set_xlabel(r'$z$ [m]')
 	axes[1].set_ylabel(r'$T_\mathrm{fluid}$ [\textdegree C]')
 	axes[1].legend(loc="best", borderaxespad=0, ncol=1, frameon=False)
@@ -170,7 +204,6 @@ def plottingTemperatures():
 	# Stress
 	axes.plot(data['z_nts'].reshape(-1),data['s_nts'].reshape(-1),label='Logie et al. (2018)')
 	axes.plot(data['z'].reshape(-1),data['s_eq'].reshape(-1),ls='None',marker='o',markersize=2.5,markerfacecolor='#ffffff',label='Fontalvo (2022)')#markeredgewidth=2.5,
-	axes.set_ylim([0,800])
 	axes.set_xlabel(r'$z$ [m]')
 	axes.set_ylabel(r'$\sigma_\mathrm{crown}$ [MPa]')
 	axes.legend(loc="best", borderaxespad=0, ncol=1, frameon=False)
@@ -180,9 +213,10 @@ def plottingTemperatures():
 if __name__=='__main__':
 	parser = argparse.ArgumentParser(description='Estimates average damage of a representative tube in a receiver panel')
 	parser.add_argument('--mdba_verification', type=bool, default=False)
+	parser.add_argument('--flux_filename', type=str, default='flux-table')
 	args = parser.parse_args()
 	tinit = time.time()
-	thermal_verification(args.mdba_verification)
+	thermal_verification(args.mdba_verification,args.flux_filename)
 	plottingTemperatures()
 	seconds = time.time() - tinit
 	m, s = divmod(seconds, 60)
