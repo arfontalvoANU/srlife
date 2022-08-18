@@ -18,6 +18,97 @@ warnings.filterwarnings('ignore')
 sys.path.append('../')
 from section import *
 
+from CoolProp.CoolProp import PropsSI
+
+def htfExt(height, diameter, pipe_radius, velocity, T_wall, T_amb):
+	# External cylinder loss from Siebers and Kraabel (https://www.osti.gov/servlets/purl/6906848):
+	g = 9.81 # gravity acceleration
+
+	H = height # receiver height, m
+	D = diameter # Receiver diameter, m
+	v = velocity # velocity
+	T_wall = T_wall # Average wall temperature K+6
+	T_amb = T_amb # K
+	
+	T_m = (T_wall+T_amb)/2.
+
+	rho = PropsSI('D', 'T', T_m, 'P', 101325., 'Air') # density
+	mu = PropsSI('V', 'T', T_m, 'P', 101325., 'Air') # dynamic viscosity
+	Cp = PropsSI('CP0MASS', 'T', T_m, 'P', 101325., 'Air') # specific enthalpy
+	k = PropsSI('L', 'T', T_m, 'P', 101325., 'Air') # thermal conductivity
+	B = PropsSI('isobaric_expansion_coefficient', 'T', T_m, 'P', 101325., 'Air') # bulk expansion coefficient
+
+	nu = mu/rho # cinematic viscosity
+
+	Re = rho*v*D/mu
+	Pr = mu*Cp/k
+	Gr = g*B*(T_wall-T_amb)*H**3./(nu**2.)
+
+	# Forced convection:
+	ks_D = pipe_radius/D
+
+	def Nu_f_0(Re):
+		return 0.3+0.488*Re**0.5*(1.+(Re/282000.)**0.625)**0.8
+
+	def Nu_f_1(Re):
+		return 0.0455*Re**0.81
+
+	def interpolate(xs, ys, x):
+		if ys[0] != ys[1]:
+			a = (ys[1]-ys[0])/(xs[1]-xs[0])
+			b = ys[1]/(a*xs[1])
+			y = a*x+b
+		else:
+			y = ys[0]
+		return y
+
+	def Nu_f_interpolated(ks_D, Re):
+		ks_D_data = np.r_[0., 75e-5, 300e-5, 900e-5]
+		x0, x1 = np.amax(ks_D_data[ks_D_data<=ks_D]), np.amin(ks_D_data[ks_D_data>=ks_D])
+		x_inter = [x0, x1]
+		Nu_f_inter = []
+		for x in x_inter:		
+			if x == 0:
+				Nu_f_inter.append(Nu_f_0(Re))
+			if x == 75e-5:
+				if Re<=7e5:
+					Nu_f_inter.append(Nu_f_0(Re))
+				if 7e5<Re<2.2e7:
+					Nu_f_inter.append(2.57e-3*Re*0.98)
+				if Re>=2.2e7:
+					Nu_f_inter.append(Nu_f_1(Re))
+			if x == 300e-5:
+				if Re<=1.8e5:
+					Nu_f_inter.append(Nu_f_0(Re))
+				if 1.8e5<Re<4e6:
+					Nu_f_inter.append(0.0135e-3*Re**0.89)
+				if Re>=4e6:
+					Nu_f_inter.append(Nu_f_1(Re))
+			if x == 900e-5:
+				if Re<=1e5:
+					Nu_f_inter.append(Nu_f_0(Re))
+				if Re>1e5:
+					Nu_f_inter.append(Nu_f_1(Re))
+
+		Nu_f = interpolate(x_inter, Nu_f_inter, ks_D)
+		return Nu_f
+	
+	h_f = k*Nu_f_interpolated(ks_D, Re)/D
+
+	# Natural convection:
+	Nu_n = 0.098*Gr**(1./3.)*(T_wall/T_amb)**-0.14
+	h_n = k*Nu_n/H
+	#print height, diameter, pipe_radius, velocity, T_wall, T_amb,h_n,h_f
+	if h_f>1e-6:
+		h = (h_f**3.2+(np.pi/2.*h_n)**3.2)**(1./3.2)
+	else:
+		h=0.
+		
+	return h
+
+def kp800H(T):
+	return 4.503E+00+2.887E-02*T-2.020E-05*T**2+1.018E-08*T**3
+
 class mdba_results:
 	def __init__(self,filename,model):
 		fileo = open(filename,'rb')
@@ -74,8 +165,8 @@ def thermal_verification(mdba_verification,filename):
 		CG = np.genfromtxt('fluxInput.csv', delimiter=',')*1e6
 		# Flow and thermal parameters Sanchez-Gonzalez et al. (2017): https://doi.org/10.1016/j.solener.2015.12.055
 		m_flow_tb = 4.2
-		h_ext = 9.455648305589014
 		Tamb = 35+273.15
+		h_ext = htfExt(10.5, 8.5, 45./2000., 0., 700.65, Tamb)
 
 	# Instantiating variables
 	z = np.linspace(0,model.H_rec*model.nz/model.nbins,model.nz)
@@ -99,6 +190,7 @@ def thermal_verification(mdba_verification,filename):
 
 	# Running thermal model
 	for k in tqdm(range(model.nz)):
+		model.kp=kp800H(Tf[k])
 		Qnet = model.Temperature(m_flow_tb, Tf[k], Tamb, CG[k], h_ext)
 		C = model.specificHeatCapacityCp(Tf[k])*m_flow_tb
 		Tf[k+1] = Tf[k] + Qnet/C
@@ -111,9 +203,10 @@ def thermal_verification(mdba_verification,filename):
 		s.h_int = h_int
 		s.CG = CG[k]
 		s.T_int = Tf_nts[k]
+		s.k=kp800H(Tf_nts[k])
 		ret = s.solve(eps=1e-6)
 		s.postProcessing()
-		Q = 2*np.pi*model.kp*s.B0*model.dz
+		Q = 2*np.pi*s.k*s.B0*model.dz
 		Tf_nts[k+1] = Tf_nts[k] + Q/salt.Cp/m_flow_tb
 		T_i_nts[k] = s.T[0,0]
 		T_o_nts[k] = s.T[0,-1]
