@@ -19,18 +19,20 @@ sys.path.append('../')
 from section import *
 
 class mdba_results:
-	def __init__(self,filename,Tset):
+	def __init__(self,filename,model):
 		fileo = open(filename,'rb')
 		data = pickle.load(fileo)
 		fileo.close()
 		q_net = data['q_net']
 		areas = data['areas']
+		self.Tset = data['T_out']
 		self.m_flow = data['m'][0]/data['n_tubes'][0]
 		self.CG = q_net[data['fp'][0]]/areas[data['fp'][0]]
-		self.Tamb = 298.15
-		self.h_ext = 0
-		self.model = receiver_cyl(Ri = 42/2000, Ro = 45/2000, R_fouling=8.808e-5, ab = 0.93, em = 0.87, kp = 21.0, Dittus=False)
-		self.Tset=Tset
+		self.flux_in = data['flux_in'][0]
+		self.Tamb = data['T_amb']
+		self.h_ext = data['h_conv_ext']
+		self.fl = data['flux_lim']
+		self.model = model
 	def f(self,m):
 		Tf = self.model.T_in*np.ones(self.model.nz+1)
 		for k in range(self.model.nz):
@@ -40,7 +42,12 @@ class mdba_results:
 		return abs(self.Tset-Tf[-1])
 	def solve(self):
 		prev = time.time()
-		res=optimize.minimize(self.f, 0.5*self.m_flow, method='COBYLA', bounds=(0,self.m_flow), options={'disp':True})
+		cons = []
+		l = {'type': 'ineq', 'fun': lambda x, lb=0.0000: x - lb}
+		u = {'type': 'ineq', 'fun': lambda x, ub=self.m_flow: ub - x}
+		cons.append(l)
+		cons.append(u)
+		res=optimize.minimize(self.f, 0.75*self.m_flow, constraints=cons, method='COBYLA', options={'disp':True})
 		secs = time.time() - prev
 		mm, ss = divmod(secs, 60)
 		hh, mm = divmod(mm, 60)
@@ -50,24 +57,25 @@ class mdba_results:
 def thermal_verification(mdba_verification,filename):
 
 	# Instantiating receiver model
-	model = receiver_cyl(Ri = 42/2000, Ro = 45/2000, R_fouling=8.808e-5, ab = 0.93, em = 0.87, kp = 21.0, Dittus=False)
+	model = receiver_cyl(Ri = 42/2000, Ro = 45/2000, R_fouling=8.808e-5, ab = 0.93, em = 0.87, kp = 18.3, Dittus=False)
 	if mdba_verification:
-		T_set=565+273.15
 		# Importing solar flux from MDBA output using flux limits from Sanchez-Gonzalez et al. (2017): https://doi.org/10.1016/j.solener.2015.12.055
-		mdba = mdba_results(filename,T_set)
-		CG = mdba.CG
+		mdba = mdba_results(filename,model)
+		T_set=mdba.Tset
+		CG = mdba.flux_in
+		h_ext = mdba.h_ext
+		fl = mdba.fl
+		Tamb = mdba.Tamb
 		# Mass flow rate calculated from MDBA output using flux limits from Sanchez-Gonzalez et al. (2017): https://doi.org/10.1016/j.solener.2015.12.055
-		m_flow_tb = mdba.solve()
+		m_flow_tb = mdba.m_flow
 	else:
 		T_set=565+273.15
 		# Importing solar flux Sanchez-Gonzalez et al. (2017): https://doi.org/10.1016/j.solener.2015.12.055
 		CG = np.genfromtxt('fluxInput.csv', delimiter=',')*1e6
-		# Mass flow rate from Sanchez-Gonzalez et al. (2017): https://doi.org/10.1016/j.solener.2015.12.055
+		# Flow and thermal parameters Sanchez-Gonzalez et al. (2017): https://doi.org/10.1016/j.solener.2015.12.055
 		m_flow_tb = 4.2
-
-	# Flow and thermal parameters Sanchez-Gonzalez et al. (2017): https://doi.org/10.1016/j.solener.2015.12.055
-	Tamb = 298.15
-	h_ext = 0
+		h_ext = 9.455648305589014
+		Tamb = 35+273.15
 
 	# Instantiating variables
 	z = np.linspace(0,model.H_rec*model.nz/model.nbins,model.nz)
@@ -138,9 +146,9 @@ def thermal_verification(mdba_verification,filename):
 	yf = yfd[np.logical_not(np.isnan(yfd))]
 	xp = xpd[np.logical_not(np.isnan(xpd))]
 	yp = ypd[np.logical_not(np.isnan(ypd))]
-	xj = xj[np.logical_not(np.isnan(ypd))]
-	yfj = yfj[np.logical_not(np.isnan(ypd))]
-	ypj = ypj[np.logical_not(np.isnan(ypd))]
+	xj = xj[np.logical_not(np.isnan(xj))]
+	yfj = yfj[np.logical_not(np.isnan(yfj))]
+	ypj = ypj[np.logical_not(np.isnan(ypj))]
 
 	# Creating directory
 	data = {}
@@ -167,6 +175,14 @@ def thermal_verification(mdba_verification,filename):
 	data['T_i'] = T_i
 	data['Tf'] = Tf
 	scipy.io.savemat('verification_res.mat',data)
+
+	if mdba_verification:
+		case = '%d'%(T_set-273.15)
+		f = open('mdba_flux_%s.csv'%(case),'w+')
+		f.write('z_flux_mdba_%s,flux_mdba_%s,limit_mdba_%s,Ti_mdba_%s,Tf_mdba_%s,s_mdba_%s\n'%(case,case,case,case,case,case))
+		for i,v in enumerate(z):
+			f.write('%s,%s,%s,%s,%s,%s\n'%(v,mdba.CG[i]/1e6,fl[i],T_i[i]-273.15,Tf[i+1]-273.15,s_eq[i]/1e6))
+		f.close()
 
 def plottingTemperatures():
 	# Importing data
