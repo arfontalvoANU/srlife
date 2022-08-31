@@ -14,6 +14,11 @@ from functools import partial
 from multiprocessing import Pool
 from tqdm import tqdm
 
+import colorama
+colorama.init()
+def yellow(text):
+	return colorama.Fore.YELLOW + colorama.Style.BRIGHT + text + colorama.Style.RESET_ALL
+
 sys.path.append('../..')
 
 from srlife import receiver, solverparams, library, thermal, structural, system, damage, managers
@@ -174,39 +179,27 @@ def make_extrapolate(D, extrapolate="lump",order=1):
 	else:
 		raise ValueError("Unknown damage extrapolation approach %s!" % extrapolate)
 
-def run_heuristics(days,step,gemasolar_600=False):
+def run_heuristics(days,step,solartherm_res):
 	# Instantiating receiver model
-	model = receiver_cyl(Ri = 20.0/2000, Ro = 22.4/2000, R_fouling=8.808e-5, ab = 0.93, em = 0.87)
+	model = receiver_cyl(Ri = 43.0/2000, Ro = 45.0/2000, R_fouling=8.808e-5, ab = 0.93, em = 0.87, kp = 18.3, Dittus=False)
 
-	# Importing data from Modelica
-	if gemasolar_600:
-		model.import_mat('nitrate_salt_600degC.mat')
-		# Importing times
-		times = model.data[:,0]
-		# Importing flux
-		CG = model.data[:,model._vars['CG[1]'][2]:model._vars['CG[450]'][2]+1]
-		m_flow_tb = model.data[:,model._vars['m_flow_tb'][2]]
-		Tamb = model.data[:,model._vars['data.Tdry'][2]]
-		h_ext = model.data[:,model._vars['h_conv'][2]]
-		ele = model.data[:,model._vars['ele'][2]]
-		on_forecast = model.data[:,model._vars['on_hf'][2]]
-	else:
-		model.import_mat('GemasolarSystemOperation_res.mat')
-		# Importing times
-		times = model.data[:,0]
-		# Importing flux
-		CG = model.data[:,model._vars['heliostatField.CG[1]'][2]:model._vars['heliostatField.CG[450]'][2]+1]
-		m_flow_tb = model.data[:,model._vars['heliostatField.m_flow_tb'][2]]
-		Tamb = model.data[:,model._vars['receiver.Tamb'][2]]
-		h_ext = model.data[:,model._vars['receiver.h_conv'][2]]
-		ele = model.data[:,model._vars['heliostatField.ele'][2]]
-		on_forecast = model.data[:,model._vars['heliostatField.on_hf_forecast'][2]]
+	model.import_mat(solartherm_res)
+	# Importing times
+	times = model.data[:,0]
+	# Importing flux
+	CG = model.data[:,model._vars['heliostatField.CG[1]'][2]:model._vars['heliostatField.CG[450]'][2]+1]
+	CG = CG*1e-3
+	m_flow_tb = model.data[:,model._vars['heliostatField.m_flow_tb'][2]]
+	Tamb = model.data[:,model._vars['receiver.Tamb'][2]]
+	h_ext = model.data[:,model._vars['receiver.h_conv'][2]]
+	ele = model.data[:,model._vars['heliostatField.ele'][2]]
 
 	# Filtering times
 	index = []
 	_times = []
 	time_lb = days[0]*86400
 	time_ub = days[1]*86400
+	print(yellow('	Sorting times'))
 	for i in tqdm(range(len(times))):
 		if times[i]%step==0 and times[i] not in _times and time_lb<=times[i] and times[i]<=time_ub:
 			index.append(i)
@@ -220,15 +213,9 @@ def run_heuristics(days,step,gemasolar_600=False):
 	Tamb = Tamb[index]
 	h_ext = h_ext[index]
 	ele = ele[index]
-	on_forecast = on_forecast[index]
 
 	tm = np.mod(times,24)
 	inds = np.where(tm==0)[0]
-
-	for i in range(len(inds)-1):
-		if not np.any(on_forecast[inds[i]:inds[i+1]]==1):
-			m_flow_tb[inds[i]:inds[i+1]]=0
-			CG[inds[i]:inds[i+1],:]=0
 
 	# Instantiating variables
 	field_off = [0]; start = []; stop = []
@@ -257,6 +244,7 @@ def run_heuristics(days,step,gemasolar_600=False):
 	qnet = np.zeros((times.shape[0],2*model.nt-1,model.nz))
 
 	# Running thermal model
+	print(yellow('	Running thermal model'))
 	for k in tqdm(range(model.nz)):
 		Qnet = model.Temperature(m_flow_tb, Tf[:,k], Tamb, CG[:,k], h_ext)
 		C = model.specificHeatCapacityCp(Tf[:,k])*m_flow_tb
@@ -469,10 +457,13 @@ def uniaxial_neml(heuristics_res,srlife_res,panel,position,debug=False):
 
 if __name__=='__main__':
 	parser = argparse.ArgumentParser(description='Estimates average damage of a representative tube in a receiver panel')
-	parser.add_argument('--days', nargs=2, type=int, default=[0,1])
-	parser.add_argument('--step', type=float, default=900)
-	parser.add_argument('--run_heuristics', type=bool, default=False)
-	parser.add_argument('--run_uniaxial_neml', type=bool, default=True)
+	# Heuristics
+	parser.add_argument('--days', nargs=2, type=int, default=[0,365])
+	parser.add_argument('--step', type=float, default=1800)
+	parser.add_argument('--run_heuristics', type=bool, default=True)
+	parser.add_argument('--solartherm_res', type=str, default='GemasolarSystemOperation_res_0.mat')
+	# UniaxialModel
+	parser.add_argument('--run_uniaxial_neml', type=bool, default=False)
 	parser.add_argument('--heuristics_res', type=str, default='heuristics_res.mat')
 	parser.add_argument('--srlife_res', type=str, default='./results_tmy_d10/quadrature_results.mat')
 	parser.add_argument('--panel', type=float, default=4)
@@ -480,10 +471,15 @@ if __name__=='__main__':
 	args = parser.parse_args()
 
 	tinit = time.time()
+
+	# Heuristics
 	if args.run_heuristics:
-		run_heuristics(args.days,args.step)
+		run_heuristics(args.days,args.step,args.solartherm_res)
+
+	# UniaxialModel
 	if args.run_uniaxial_neml:
 		uniaxial_neml(args.heuristics_res,args.srlife_res,args.panel,args.position)
+
 	seconds = time.time() - tinit
 	m, s = divmod(seconds, 60)
 	h, m = divmod(m, 60)

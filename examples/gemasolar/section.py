@@ -180,16 +180,16 @@ class receiver_cyl:
 			if self.Dittus:
 				Nu = 0.023 * pow(Re, 0.8) * pow(Pr, 0.4)
 			else:
-				f = pow(1.82*np.log10(Re) - 1.64, -2)
+				f = pow(1.82*np.log10(np.maximum(Re,1)) - 1.64, -2)
 				Nu = (f/8)*(Re - 1000)*Pr/(1 + 12.7*pow(f/8, 0.5)*(pow(Pr,0.66)-1))
 		else:
-			Nu = 5.6 + 0.0165 * pow(Re*Pr, 0.85) * pow(Pr, 0.01);
+			Nu = 5.6 + 0.0165 * pow(Re*Pr, 0.85) * pow(Pr, 0.01)
+		Nu = np.maximum(Nu,4.36)
 
 		# HTF internal heat transfer coefficient
-		if self.R_fouling==0:
-			hf = Nu * kf / self.d
-		else:
-			hf = Nu * kf / self.d / (1. + Nu * kf / self.d * self.R_fouling)
+		hf = Nu * kf / self.d
+		if self.R_fouling>0:
+			hf = 1./(1./hf + self.R_fouling)
 
 		# Calculating heat flux at circumferential nodes
 		cosinesm,fluxes = np.meshgrid(self.cosines,CG)
