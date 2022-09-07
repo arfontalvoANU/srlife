@@ -20,6 +20,12 @@ from section import *
 
 from CoolProp.CoolProp import PropsSI
 
+from mdbapy.cal_sun import SunPosition
+import colorama
+colorama.init()
+def yellow(text):
+	return colorama.Fore.YELLOW + colorama.Style.BRIGHT + text + colorama.Style.RESET_ALL
+
 def htfExt(height, diameter, pipe_radius, velocity, T_wall, T_amb):
 	# External cylinder loss from Siebers and Kraabel (https://www.osti.gov/servlets/purl/6906848):
 	g = 9.81 # gravity acceleration
@@ -109,6 +115,38 @@ def htfExt(height, diameter, pipe_radius, velocity, T_wall, T_amb):
 def kp800H(T):
 	return 4.503E+00+2.887E-02*T-2.020E-05*T**2+1.018E-08*T**3
 
+def secant(fun,x0,tol=1e-2, maxiter=100):
+	x1 = (1.-1e-5)*x0
+	f0 = fun(x0)
+	f1 = fun(x1)
+	i = 0
+	xs = [x0,x1]
+	fs = [f0,f1]
+	alpha = 1
+	while abs(f1) > tol and i < maxiter:
+		x2 = float(f1 - f0)/(x1 - x0)
+		x = x1 - alpha*float(f1)/x2
+
+		if x<0:
+			alpha=alpha/2.
+		elif np.isnan(fun(x)):
+			alpha=alpha/2.
+		else:
+			x0 = x1
+			x1 = x
+			f0 = f1
+			f1 = fun(x1)
+			alpha = 1
+
+		xs.append(x1)
+		fs.append(f1)
+		i += 1
+
+	fmin = min(fs)
+	imin = fs.index(fmin)
+	xmin = xs[imin]
+	return xmin
+
 class mdba_results:
 	def __init__(self,filename,model):
 		fileo = open(filename,'rb')
@@ -122,7 +160,10 @@ class mdba_results:
 		self.flux_in = data['flux_in'][0]
 		self.Tamb = data['T_amb']
 		self.h_ext = data['h_conv_ext']
-		self.fl = data['flux_lim']
+		try:
+			self.fl = data['flux_lim']
+		except:
+			self.fl = 0.
 		self.model = model
 	def f(self,m):
 		Tf = self.model.T_in*np.ones(self.model.nz+1)
@@ -130,7 +171,7 @@ class mdba_results:
 			Qnet = self.model.Temperature(m, Tf[k], self.Tamb, self.CG[k], self.h_ext)
 			C = self.model.specificHeatCapacityCp(Tf[k])*m
 			Tf[k+1] = Tf[k] + Qnet/C
-		return abs(self.Tset-Tf[-1])
+		return abs(self.Tset-Tf[self.model.nz])
 	def solve(self):
 		prev = time.time()
 		cons = []
@@ -144,6 +185,110 @@ class mdba_results:
 		hh, mm = divmod(mm, 60)
 		print('	Simulation time: {:d}:{:02d}:{:02d}'.format(int(hh), int(mm), int(ss)))
 		return res.x[0]
+
+def get_mass_flow(filename):
+
+	# Instantiating receiver model
+	model = receiver_cyl(Ri = 42/2000, Ro = 45/2000, R_fouling=8.808e-5,
+	                     ab = 0.93, em = 0.87, kp = 18.3, Dittus=False)
+
+	# Importing solar flux
+	mdba = mdba_results(filename,model) # filename: flux-table
+	mdba.Tset = 873.15
+	CG = mdba.flux_in
+	h_ext = mdba.h_ext
+	Tamb = mdba.Tamb
+	# Mass flow rate calculated from MDBA output
+	m_flow_tb = secant(mdba.f, mdba.m_flow)
+	print(m_flow_tb)
+	print(mdba.f(m_flow_tb))
+
+class mflow_adjust:
+	def __init__(self, T=565, folder='.', latitude=37.56):
+		self.latitude = latitude
+		self.folder = folder
+		self.T = T
+
+	def get_mflow(self): # OELT and RELT generations
+
+		# Instantiating receiver model
+		model = receiver_cyl(Ri = 42/2000, Ro = 45/2000, R_fouling=8.808e-5,
+		                     ab = 0.93, em = 0.87, kp = 18.3, Dittus=False)
+
+		months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
+		print(yellow('	Getting mass flow rates'))
+
+		N=10  # for lammda, ecliptic longitude
+		M=24  # for omega
+		F=np.arange((N+1)*(M+1)*7,dtype=float).reshape(N+1,M+1,7) # the OELT, 0-field eff, 1-unavail,2-cosine, 3-reflective,4-sb,5-att,6-spi
+
+		Lammda=np.linspace(-np.pi,np.pi,N+1)
+		Omega=np.linspace(-np.pi,np.pi,M+1)
+		DNI_ratio=[0.56,0.87,1.00,1.39]
+		sun=SunPosition()
+
+		for fp in range(2):
+			f = open('%s/mflow_N08811_salt_path%s_600_sa.motab'%(self.folder,fp+1),'w+')
+			f.write('#1\n')
+			for ratio in range(len(DNI_ratio)):
+				d = DNI_ratio[ratio]
+				T = np.genfromtxt('%s/Tbool_%s.csv'%(self.folder,d),dtype=bool,delimiter=',')
+				print('	DNI ratio',d,'flow path #',fp+1)
+				F[:,:,:]=0.
+				for n in range(3,8):
+					for m in range(int(0.5*M)+1):
+						delta = 23.4556*np.sin(Lammda[n])
+						theta=sun.zenith(self.latitude, delta, Omega[m]/np.pi*180.)
+						phi=sun.azimuth(self.latitude, theta, delta, Omega[m]/np.pi*180.)
+						elevation=90.-theta
+						if elevation<=8.:
+							continue
+
+						try:
+							# Importing solar flux
+							mdba = mdba_results('%s/flux_table_n%d_m%d_d%s'%(self.folder,n,m,d),model) # filename: flux-table
+							mdba.Tset = 873.15
+							CG = mdba.flux_in
+							h_ext = mdba.h_ext
+							Tamb = mdba.Tamb
+							# Mass flow rate calculated from MDBA output
+							F[n,m,:] = secant(mdba.f, mdba.m_flow)
+						except:
+							print('No such file or directory: ./gemasolar_annual_N08811_565/flux_table_n%d_m%d_d%s'%(n,m,d))
+							print((270.-phi)%360.,elevation)
+							continue
+
+					for m in range(int(0.5*M)+1,M+1):
+						F[n,m,:]=F[n,M-m,:]
+
+				for n in range(3):
+					F[n,:,:]=F[5-n,:,:]
+
+				for n in range(8,11):
+					F[n,:,:]=F[15-n,:,:]
+
+				F_output=np.arange((N+2)*(M+2),dtype=float).reshape(N+2,M+2)
+				F_output[0,1:]=Omega/np.pi*180.
+				F_output[1:,0]=Lammda/np.pi*180.
+				F_output[1:,1:]=F[:,:,0]
+
+				f.write('# DNI ratio: %s\n'%(d))
+				f.write('double mflow_%s(%d,%d)\n'%(ratio+1, N+2, M+2))
+				for i in range(F_output.shape[0]):
+					for j in range(F_output.shape[1]):
+						if i==0:
+							f.write('%.1f '%F_output[i,j])
+						elif j==0:
+							f.write('%.1f '%F_output[i,j])
+						else:
+							if T[i-1,j-1]:
+								f.write('%s '%F_output[i,j])
+							else:
+								f.write('0.0 ')
+					f.write('\n')
+				f.write('\n')
+			f.close()
 
 def thermal_verification(mdba_verification,filename):
 
@@ -325,7 +470,12 @@ if __name__=='__main__':
 	parser.add_argument('--flux_filename', type=str, default='flux-table')
 	args = parser.parse_args()
 	tinit = time.time()
-	thermal_verification(args.mdba_verification,args.flux_filename)
+	if args.mdba_verification:
+		thermal_verification(args.mdba_verification,args.flux_filename)
+	else:
+		#get_mass_flow(args.flux_filename)
+		model=mflow_adjust(T=565, folder='/home/arfontalvo/ownCloud/phd_update/damage/gemasolar_annual_N08811_565')
+		model.get_mflow()
 	plottingTemperatures()
 	seconds = time.time() - tinit
 	m, s = divmod(seconds, 60)
