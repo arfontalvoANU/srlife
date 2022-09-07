@@ -7,6 +7,7 @@
 doc/sphinx/build
 examples/large-experiments
 examples/small-experiments
+examples/gemasolar/results_*
 build/
 srlife.egg-info/
 dist/
