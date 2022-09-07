@@ -25,54 +25,9 @@ from srlife import receiver, solverparams, library, thermal, structural, system,
 from neml import uniaxial
 from section import *
 
-def unneml(strain, stress, Tcrown, times):
-	# Choose the material models
-	mat =     "A230"
-	defomat = "const_base"                         # base | elastic_creep | elastic_model | const_elastic_creep | const_base
-	deformation_mat = library.load_deformation(mat, defomat)
-	neml_model = deformation_mat.get_neml_model()
-	umodel = uniaxial.UniaxialModel(neml_model, verbose = False)
-
-	hn = umodel.init_store()
-	en = strain[0]; sn = stress[0]; Tn = Tcrown[0]; tn = times[0]
-	un = 0.0; pn = 0.0;
-	es = [en]; ss = [sn]; ep=0
-
-	for enp1, Tnp1, tnp1, snt in zip(strain[1:],Tcrown[1:],times[1:],stress[1:]):
-		snp1, hnp1, Anp1, unp1, pnp1 = umodel.update(enp1, en, Tnp1, Tn, tnp1, tn, sn, hn, un, pn)
-		ss.append(abs(snp1))
-		sn = snp1
-		hn = np.copy(hnp1)
-		en = enp1
-		Tn = Tnp1
-		tn = tnp1
-		un = unp1
-		pn = pnp1
-	return np.array(ss)
-
-def neuber(strain, stress, Tcrown, times):
-
-	def young(x):
-		t = 1
-		r = 0
-		for c in [2.2044234994347612e+005,-2.7386993552734808e+001,-2.7961279027629220e-002]:
-			r += c * t
-			t *= x
-		return r
-	sigma,res = np.zeros(times.shape[0]),np.zeros(times.shape[0])
-
-	for i,T in enumerate(Tcrown):
-		E = young(T)
-		K = -0.547085201793722*T + 808.041704035874
-		n = -0.000148430493274*T + 0.168123609865471
-		f = lambda x: pow(x,2.)/E + x*pow(x/K,1./n) - stress[i]*strain[i]
-		sigma[i] = fsolve(f, stress[i])
-		res[i]   = f(sigma[i])
-	return sigma,res
-
 def print_table_latex(model, data):
 	print('')
-	print('Cumulative creep and fatigue damage and projected receiver life for a nitrate-salt Gemasolar-like receiver. Material: UNS N06230.')
+	print('Cumulative creep and fatigue damage and projected receiver life for a nitrate-salt Gemasolar-like receiver. Material: UNS N08811.')
 	for i in range(int(model.nz/model.nbins)):
 		lb = model.nbins*i
 		ub = lb + model.nbins - 1
@@ -179,16 +134,21 @@ def make_extrapolate(D, extrapolate="lump",order=1):
 	else:
 		raise ValueError("Unknown damage extrapolation approach %s!" % extrapolate)
 
-def run_heuristics(days,step,solartherm_res):
+def run_heuristics(days,step,solartherm_res,mat='800H'):
 	# Instantiating receiver model
-	model = receiver_cyl(Ri = 43.0/2000, Ro = 45.0/2000, R_fouling=8.808e-5, ab = 0.93, em = 0.87, kp = 18.3, Dittus=False)
+	if mat =='A230':
+		kp = 17.97; alpha = 15.61e-06; Young = 184e9; poisson = 0.31;
+	elif mat == '800H':
+		kp = 18.30; alpha = 18.28e-06; Young = 171e9; poisson = 0.31;
+	model = receiver_cyl(Ri = 42.0/2000, Ro = 45.0/2000, R_fouling=8.808e-5,
+	                     alpha = alpha, Young = Young, poisson = poisson,
+	                     ab = 0.93, em = 0.87, kp = kp, Dittus=False)
 
 	model.import_mat(solartherm_res)
 	# Importing times
 	times = model.data[:,0]
 	# Importing flux
 	CG = model.data[:,model._vars['heliostatField.CG[1]'][2]:model._vars['heliostatField.CG[450]'][2]+1]
-	CG = CG*1e-3
 	m_flow_tb = model.data[:,model._vars['heliostatField.m_flow_tb'][2]]
 	Tamb = model.data[:,model._vars['receiver.Tamb'][2]]
 	h_ext = model.data[:,model._vars['receiver.h_conv'][2]]
@@ -270,7 +230,6 @@ def run_heuristics(days,step,solartherm_res):
 		6.0 * (sigma_i[:,:,3]**2.0 + sigma_i[:,:,4]**2.0 + sigma_i[:,:,5]**2.0))/2.0)
 
 	# Choose the material models
-	mat =     "A230"
 	thermat = "base"                               # base
 	defomat = "const_base"                         # base | elastic_creep | elastic_model | const_elastic_creep | const_base
 	damat =   "base"                               # base
@@ -334,138 +293,174 @@ def run_heuristics(days,step,solartherm_res):
 
 	if (days[1] - days[0])==1:
 		# Creating subplots
-		fig, axes = plt.subplots(2,2, figsize=(12,8))
-		# Front tube stress
-		axes[0,0].plot(times,sigmaEq_i[:,180],label='Inner')
-		axes[0,0].plot(times,sigmaEq_o[:,180],label='Outer')
+		fig, axes = plt.subplots(2,4, figsize=(18,8))
+		# Tube front stress (inner)
+		axes[0,0].plot(times,sigmaEq_i)
 		axes[0,0].set_xlabel(r'$t$ [h]')
-		axes[0,0].set_ylabel(r'$\sigma_\mathrm{crown,eq}$ [MPa]')
-		axes[0,0].legend(loc="best", borderaxespad=0, ncol=1, frameon=False)
-		# Front tube temperatures
-		axes[0,1].plot(times,T_i[:,180]-273.15,label='Inner')
-		axes[0,1].plot(times,T_o[:,180]-273.15,label='Outer')
+		axes[0,0].set_ylabel(r'$\sigma_\mathrm{max,i}$ [MPa]')
+		# Tube front stress (outer)
+		axes[0,1].plot(times,sigmaEq_o)
 		axes[0,1].set_xlabel(r'$t$ [h]')
-		axes[0,1].set_ylabel(r'$T_\mathrm{front}$ [\textdegree C]')
-		axes[0,1].legend(loc="best", borderaxespad=0, ncol=1, frameon=False)
-		# Inner surface temperature of front tube vs z
-		bnd = np.unravel_index(sigmaEq_o.argmax(), sigmaEq_o.shape)
-		bnd = bnd[0]
+		axes[0,1].set_ylabel(r'$\sigma_\mathrm{max,o}$ [MPa]')
+		# Tube front temperatures
+		axes[0,2].plot(times,T_i-273.15)
+		axes[0,2].set_xlabel(r'$t$ [h]')
+		axes[0,2].set_ylabel(r'$T_\mathrm{i}$ [\textdegree C]')
+		# Tube front temperatures
+		axes[0,3].plot(times,T_o-273.15)
+		axes[0,3].set_xlabel(r'$t$ [h]')
+		axes[0,3].set_ylabel(r'$T_\mathrm{o}$ [\textdegree C]')
+		# Tube front temperature vs z
 		z = np.linspace(0,model.H_rec*model.nz/model.nbins,model.nz)
-		axes[1,0].plot(z,np.transpose(T_i)[:,bnd]-273.15,label='Inner')
-		axes[1,0].plot(z,np.transpose(T_o)[:,bnd]-273.15,label='Outer')
+		axes[1,0].plot(z,np.transpose(T_i)-273.15)
 		axes[1,0].set_xlabel(r'$z$ [m]')
 		axes[1,0].set_ylabel(r'$T_\mathrm{front}$ [\textdegree C]')
-		axes[1,0].legend(loc="best", borderaxespad=0, ncol=1, frameon=False)
-		# Fluid temperature vs z
-		axes[1,1].plot(z,np.transpose(Tf)[1:,bnd]-273.15,label='Inner')
+		# Tube front temperature vs z
+		axes[1,1].plot(z,np.transpose(T_o)-273.15)
 		axes[1,1].set_xlabel(r'$z$ [m]')
-		axes[1,1].set_ylabel(r'$T_\mathrm{fluid}$ [\textdegree C]')
-		axes[1,1].legend(loc="best", borderaxespad=0, ncol=1, frameon=False)
+		axes[1,1].set_ylabel(r'$T_\mathrm{front}$ [\textdegree C]')
+		# Fluid temperature vs z
+		axes[1,2].plot(z,np.transpose(Tf)[1:,:]-273.15)
+		axes[1,2].set_xlabel(r'$z$ [m]')
+		axes[1,2].set_ylabel(r'$T_\mathrm{fluid}$ [\textdegree C]')
+		# Fluid temperature vs z
+		axes[1,3].plot(times,Tf[:,-1]-273.15)
+		axes[1,3].set_xlabel(r'$t$ [h]')
+		axes[1,3].set_ylabel(r'$T_\mathrm{fluid}$ [\textdegree C]')
 		plt.tight_layout()
 		plt.savefig('Heuristics.png',dpi=300)
 
-def uniaxial_neml(heuristics_res,srlife_res,panel,position,debug=False):
+class heuristics:
+	def __init__(self, res='heuristics_res.mat', mat='800H', thermat = 'base', defomat='const_base', damat='base', folder='.'):
+		self.folder = folder
+		self.mat = mat
+		self.defomat = defomat                                    # base | elastic_creep | elastic_model | const_elastic_creep | const_base
+		self.thermal_mat, self.deformation_mat, self.damage_mat = library.load_material(mat, thermat, defomat, damat)
+		self.res = res
+		data = scipy.io.loadmat('%s/%s'%(self.folder,self.res))
+		self.times = data['times'].flatten()
+		self.nbins = data['nbins'].flatten()[0]
+		self.epsilon_o = data['epsilon_o']
+		self.sigma_o = data['sigma_o']
+		self.T_o = data['T_o']
+		self.strain = np.sqrt(2.0)/3.0 * np.sqrt(
+			  (self.epsilon_o[:,:,0] - self.epsilon_o[:,:,1])**2.0
+			+ (self.epsilon_o[:,:,1] - self.epsilon_o[:,:,2])**2.0
+			+ (self.epsilon_o[:,:,2] - self.epsilon_o[:,:,0])**2.0
+			+ 6.0 * (self.epsilon_o[:,:,3]**2.0
+			+ self.epsilon_o[:,:,4]**2.0
+			+ self.epsilon_o[:,:,5]**2.0)
+			)
+		self.stress = np.sqrt((
+			(self.sigma_o[:,:,0] - self.sigma_o[:,:,1])**2.0 + 
+			(self.sigma_o[:,:,1] - self.sigma_o[:,:,2])**2.0 + 
+			(self.sigma_o[:,:,2] - self.sigma_o[:,:,0])**2.0 + 
+			6.0 * (self.sigma_o[:,:,3]**2.0 + 
+			self.sigma_o[:,:,4]**2.0 + 
+			self.sigma_o[:,:,5]**2.0))/2.0)
+		del data
 
-	data = scipy.io.loadmat(heuristics_res)
-	times = data['times'].flatten()
-	i = np.where(times==24)[0][0]
-	nbins = data['nbins'].flatten()[0]
+	def uniaxial_neml(self,panel,position):
+		lb = int(self.nbins*(panel-1) + position)
+		print('	File: %s'%self.res)
+		stress_corr = self.unneml(lb)
+		filename = '%s/%s'%(self.folder,self.res)
+		self.plot_stress(filename,stress_corr,lb)
+		tR,time_dmg = self.creepdmg(self.T_o[:,lb],stress_corr)
+		self.tablecsv(filename,stress_corr,tR,time_dmg,lb)
 
-	if debug:
-		print(nbins,panel,position)
+	def creepdmg(self,T,stress_corr):
+		period = 24
+		tR = self.damage_mat.time_to_rupture("averageRupture", T, stress_corr)
+		dts = np.diff(self.times)
+		time_dmg = dts/tR[1:]
 
-	lb = int(nbins*(panel-1) + position)
+		# Break out to cycle damage
+		nt = int((self.times[-1]-self.times[0])/24)
+		inds = id_cycles(self.times, period, nt)
 
-	strain_nts = np.sqrt(2.0)/3.0 * np.sqrt(
-		  (data['epsilon_o'][:,lb,0] - data['epsilon_o'][:,lb,1])**2.0
-		+ (data['epsilon_o'][:,lb,1] - data['epsilon_o'][:,lb,2])**2.0
-		+ (data['epsilon_o'][:,lb,2] - data['epsilon_o'][:,lb,0])**2.0
-		+ 6.0 * (data['epsilon_o'][:,lb,3]**2.0
-		+ data['epsilon_o'][:,lb,4]**2.0
-		+ data['epsilon_o'][:,lb,5]**2.0)
-		)
-	stress_nts = np.sqrt((
-		(data['sigma_o'][:,lb,0] - data['sigma_o'][:,lb,1])**2.0 + 
-		(data['sigma_o'][:,lb,1] - data['sigma_o'][:,lb,2])**2.0 + 
-		(data['sigma_o'][:,lb,2] - data['sigma_o'][:,lb,0])**2.0 + 
-		6.0 * (data['sigma_o'][:,lb,3]**2.0 + 
-		data['sigma_o'][:,lb,4]**2.0 + 
-		data['sigma_o'][:,lb,5]**2.0))/2.0)
+		# Cycle damage
+		Dc = np.array([np.sum(time_dmg[inds[i]:inds[i+1]], axis = 0) for i in range(nt)])
+		print('	Creep damage: %s\n'%np.cumsum(Dc)[-1])
 
-	Tcrown = data['T_o'][:,lb]
+		return tR,time_dmg
 
-	stress_nml = unneml(strain_nts, stress_nts, Tcrown, times)
+	def tablecsv(self,filename,stress_corr,tR,time_dmg,lb):
+		e = self.epsilon_o[:,lb,:]
+		f = open('%s.csv'%(filename),'+w')
+		f.write('time_neml,Temp_neml,stress_nts,stress_nml,e_xx_neml,e_yy_neml,e_zz_neml,e_xy_neml,e_xz_neml,e_yz_neml,tR,time_dmg\n')
+		for t,T,sn,scorr,e1,e2,e3,e4,e5,e6,tr,td in zip(self.times,self.T_o[:,lb],self.stress[:,lb],stress_corr,e[:,0],e[:,1],e[:,2],e[:,3],e[:,4],e[:,5],tR,time_dmg):
+			f.write('%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n'%(t,T,sn,scorr,e1,e2,e3,e4,e5,e6,tr,td))
+		f.close()
 
-	quadrature_results = scipy.io.loadmat(srlife_res)
-	vm = np.sqrt((
-		(quadrature_results['stress_xx'] - quadrature_results['stress_yy'])**2.0 + 
-		(quadrature_results['stress_yy'] - quadrature_results['stress_zz'])**2.0 + 
-		(quadrature_results['stress_zz'] - quadrature_results['stress_xx'])**2.0 + 
-		6.0 * (quadrature_results['stress_xy']**2.0 + 
-		quadrature_results['stress_yz']**2.0 + 
-		quadrature_results['stress_xz']**2.0))/2.0)
+	def plot_stress(self,filename,stress_corr,lb):
+		fig,axes = plt.subplots(2,1,figsize=(6,8))
 
-	eeq = np.sqrt(2.0)/3.0 * np.sqrt(
-		  (quadrature_results['mechanical_strain_xx'] - quadrature_results['mechanical_strain_yy'])**2.0
-		+ (quadrature_results['mechanical_strain_xx'] - quadrature_results['mechanical_strain_zz'])**2.0
-		+ (quadrature_results['mechanical_strain_yy'] - quadrature_results['mechanical_strain_zz'])**2.0
-		+ 6.0 * (quadrature_results['mechanical_strain_xy']**2.0
-		+ quadrature_results['mechanical_strain_xz']**2.0
-		+ quadrature_results['mechanical_strain_yz']**2.0)
-		)
+		axes[0].plot(self.times,self.stress[:,lb],label=r'$\sigma^{E}_\mathrm{eq}$')
+		axes[0].plot(self.times,stress_corr      ,label=r'$\sigma_\mathrm{eq,NEML}$')
+		axes[0].set_xlabel(r't (h)')
+		axes[0].set_ylabel(r'$\sigma_\mathrm{eq}$ (MPa)')
+		axes[0].legend(loc='best')
 
-	tt  = quadrature_results['times'].flatten()
-	Tsr = quadrature_results['temperature']
+		axes[1].plot(self.times,self.T_o[:,lb]-273.15)
+		axes[1].set_xlabel(r't (h)')
+		axes[1].set_ylabel(r'$T_\mathrm{o}$ (\textdegree C)')
 
-	e = data['epsilon_o'][:,lb,:]
-	f = open('uniaxial_neml.csv','+w')
-	f.write('time_neml,stress_nts,stress_nml,e_xx_neml,e_yy_neml,e_zz_neml,e_xy_neml,e_xz_neml,e_yz_neml\n')
-	for t,s1,s2,e1,e2,e3,e4,e5,e6 in zip(times,stress_nts,stress_nml,e[:,0],e[:,1],e[:,2],e[:,3],e[:,4],e[:,5]):
-		f.write('%s,%s,%s,%s,%s,%s,%s,%s,%s\n'%(t,s1,s2,e1,e2,e3,e4,e5,e6))
-	f.close()
+		plt.tight_layout()
+		plt.savefig('%s.png'%(filename),dpi=300)
 
-	f = open('uniaxial_srlife.csv','+w')
-	f.write('time_srlife,stress_srlife,e_xx_srlife,e_yy_srlife,e_zz_srlife,e_xy_srlife,e_xz_srlife,e_yz_srlife\n')
-	for t,s1,e1,e2,e3,e4,e5,e6 in zip(tt,vm[:,727,0],quadrature_results['mechanical_strain_xx'][:,727,0],quadrature_results['mechanical_strain_yy'][:,727,0],quadrature_results['mechanical_strain_zz'][:,727,0],
-	quadrature_results['mechanical_strain_xy'][:,727,0],quadrature_results['mechanical_strain_xz'][:,727,0],quadrature_results['mechanical_strain_yz'][:,727,0]):
-		f.write('%s,%s,%s,%s,%s,%s,%s,%s\n'%(t,s1,e1,e2,e3,e4,e5,e6))
-	f.close()
+	def plot_strains(self):
+		fig,axes = plt.subplots(1,1,figsize=(6,4))
 
-	fig,axes = plt.subplots(1,1,figsize=(6,4))
+		axes.plot(times,data['epsilon_o'][:,lb,0],label=r'$\varepsilon^{E}_\mathrm{rr}$')
+		axes.plot(times,data['epsilon_o'][:,lb,1],label=r'$\varepsilon^{E}_{\theta\theta}$')
+		axes.plot(times,data['epsilon_o'][:,lb,2],label=r'$\varepsilon^{E}_\mathrm{zz}$')
+		axes.set_xlabel(r't (h)')
+		axes.set_ylabel(r'$\varepsilon$ (mm/mm)')
+		axes.legend(loc='best')
 
-	axes.plot(times,stress_nts,label=r'$\sigma^{E}_\mathrm{eq}$')
-	axes.plot(times,stress_nml,label=r'$\sigma_\mathrm{eq,NEML}$')
-	axes.plot(tt,vm[:,727,0],label=r'$\sigma_\mathrm{eq,SRLIFE}$')
-	axes.set_xlabel(r't (h)')
-	axes.set_ylabel(r'$\sigma_\mathrm{eq}$ (MPa)')
-	axes.legend(loc='best')
+		plt.tight_layout()
+		plt.savefig('elastic_strain.png',dpi=300)
 
-	plt.tight_layout()
-	plt.savefig('comparison.png',dpi=300)
+	def unneml(self, lb):
+		# Choose the material models
+		deformation_mat = library.load_deformation(self.mat, self.defomat)
+		neml_model = deformation_mat.get_neml_model()
+		umodel = uniaxial.UniaxialModel(neml_model, verbose = False)
 
-	fig,axes = plt.subplots(1,1,figsize=(6,4))
+		hn = umodel.init_store()
+		en = self.strain[0,lb]
+		sn = self.stress[0,lb]
+		Tn = self.T_o[0,lb]
+		tn = self.times[0]
+		un = 0.0
+		pn = 0.0;
+		es = [en]
+		ss = [sn]
+		ep=0
 
-	axes.plot(times,data['epsilon_o'][:,lb,0],label=r'$\varepsilon^{E}_\mathrm{rr}$')
-	axes.plot(times,data['epsilon_o'][:,lb,1],label=r'$\varepsilon^{E}_{\theta\theta}$')
-	axes.plot(times,data['epsilon_o'][:,lb,2],label=r'$\varepsilon^{E}_\mathrm{zz}$')
-	axes.set_xlabel(r't (h)')
-	axes.set_ylabel(r'$\varepsilon$ (mm/mm)')
-	axes.legend(loc='best')
-
-	plt.tight_layout()
-	plt.savefig('elastic_strain.png',dpi=300)
+		for enp1, Tnp1, tnp1, snt in tqdm(zip(self.strain[1:,lb],self.T_o[1:,lb],self.times[1:],self.stress[1:,lb]),total=len(self.times[1:])):
+			snp1, hnp1, Anp1, unp1, pnp1 = umodel.update(enp1, en, Tnp1, Tn, tnp1, tn, sn, hn, un, pn)
+			ss.append(abs(snp1))
+			sn = snp1
+			hn = np.copy(hnp1)
+			en = enp1
+			Tn = Tnp1
+			tn = tnp1
+			un = unp1
+			pn = pnp1
+		return np.array(ss)
 
 if __name__=='__main__':
 	parser = argparse.ArgumentParser(description='Estimates average damage of a representative tube in a receiver panel')
 	# Heuristics
 	parser.add_argument('--days', nargs=2, type=int, default=[0,365])
 	parser.add_argument('--step', type=float, default=1800)
-	parser.add_argument('--run_heuristics', type=bool, default=True)
-	parser.add_argument('--solartherm_res', type=str, default='GemasolarSystemOperation_res_0.mat')
+	parser.add_argument('--heuristics', type=int, default=1)
+	parser.add_argument('--heuristics_res', type=str, default='GemasolarSystemOperation_res_0.mat')
 	# UniaxialModel
-	parser.add_argument('--run_uniaxial_neml', type=bool, default=False)
-	parser.add_argument('--heuristics_res', type=str, default='heuristics_res.mat')
-	parser.add_argument('--srlife_res', type=str, default='./results_tmy_d10/quadrature_results.mat')
+	parser.add_argument('--neml', type=int, default=1)
+	parser.add_argument('--neml_res', type=str, default='heuristics_res.mat')
 	parser.add_argument('--panel', type=float, default=4)
 	parser.add_argument('--position', type=float, default=30)
 	args = parser.parse_args()
@@ -473,12 +468,16 @@ if __name__=='__main__':
 	tinit = time.time()
 
 	# Heuristics
-	if args.run_heuristics:
-		run_heuristics(args.days,args.step,args.solartherm_res)
+	if args.heuristics:
+		run_heuristics(args.days,args.step,args.heuristics_res,mat="A230")
+		os.system('mv heuristics_res.mat ./results_heuristics/heuristics565_N06230_el.mat')
 
 	# UniaxialModel
-	if args.run_uniaxial_neml:
-		uniaxial_neml(args.heuristics_res,args.srlife_res,args.panel,args.position)
+	cases = ['565_N06230_el','565el','565in','565','600sa','600na']
+	if args.neml:
+		for f,z in zip(cases,[26,14,7,12,10,8]):
+			model = heuristics(res='./results_heuristics/heuristics%s.mat'%f)
+			model.uniaxial_neml(1,z)
 
 	seconds = time.time() - tinit
 	m, s = divmod(seconds, 60)
