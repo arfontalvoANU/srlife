@@ -374,11 +374,6 @@ class PythonTubeSolver(TubeSolver):
     for f,d in zip(fields, data):
       for ind,o in zip(inds,order):
         tube.quadrature_results[f+o][i] = self._fea2tube_element(tube, d[ind])
-    if tube.savestate:
-      mdict = tube.quadrature_results
-      mdict['times'] = tube.times
-      sio.savemat('%s/quadrature_results.mat'%tube.savefolder,mdict)
-    
     tube.quadrature_results["temperature"][i] = self._fea2tube_element(tube, state.temperature)
 
   def _fea2tube_element(self, tube, f):
